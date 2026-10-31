@@ -1,1 +1,1 @@
-# MIDA - .NET monorepo Multi Tool
+# MIDA - .NET Monorepo Multi Tool
