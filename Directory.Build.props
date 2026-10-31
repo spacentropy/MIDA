@@ -1,0 +1,18 @@
+<Project>
+    <PropertyGroup>
+        <TargetFramework>net11.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Company>Gleb Lesnikov</Company>
+        <Copyright>2026 - $([System.DateTime]::Now.Year)</Copyright>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <AnalysisMode>All</AnalysisMode>
+        <AnalysisLevel>latest</AnalysisLevel>
+        <PackageProjectUrl>https://github.com/spacentropy/MIDA</PackageProjectUrl>
+        <PackageReleaseNotes>https://github.com/spacentropy/MIDA/releases</PackageReleaseNotes>
+
+        <Features>$(Features);runtime-async=on</Features>
+    </PropertyGroup>
+</Project>
