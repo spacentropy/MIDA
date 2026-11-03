@@ -10,6 +10,8 @@
         <EnableNETAnalyzers>true</EnableNETAnalyzers>
         <AnalysisMode>All</AnalysisMode>
         <AnalysisLevel>latest</AnalysisLevel>
+        <!-- NativeAOT is deferred, not dropped: keep every assembly trim/AOT-clean. See docs/notes/nativeaot.md -->
+        <IsAotCompatible>true</IsAotCompatible>
         <PackageProjectUrl>https://github.com/spacentropy/MIDA</PackageProjectUrl>
         <PackageReleaseNotes>https://github.com/spacentropy/MIDA/releases</PackageReleaseNotes>
 

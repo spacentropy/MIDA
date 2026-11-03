@@ -1,6 +1,6 @@
 # MIDA design
 
-Status: draft, started 2026-10-31. Background: [landscape report](research_notes/reports/NET%20monorepo%20tooling%20landscape.md), [cache on object storage](notes/build-cache-object-store.md).
+Status: draft, started 2026-10-31. Background: [landscape report](research_notes/reports/NET%20monorepo%20tooling%20landscape.md), [cache on object storage](notes/build-cache-object-store.md). Implementation: [MVP plan](plan.md).
 
 ## 1. Goals
 
@@ -42,7 +42,11 @@ MIDA is a monorepo tool for .NET. It makes one repository with hundreds of proje
 - **Zero per-project files.** csproj, slnx, slnf and dirs.proj are the only build description. Adoption adds nothing to projects. MIDA can emit an slnf of the affected set so the IDE and plain `dotnet build` work on the same scope.
 - **MSBuild stays the executor.** `dotnet build`, Rider and Visual Studio keep working unchanged.
 - **No server.** Cache and metrics live in a bucket the team already has. Concurrency uses the provider's conditional writes.
-- **Ships as a NativeAOT dotnet tool.** One `dotnet tool install`, instant startup, works on Linux, macOS and Windows.
+- **Ships as a dotnet tool.** One `dotnet tool install`, works on Linux, macOS and Windows. v1 is framework-dependent and loads the installed SDK's MSBuild through MSBuildLocator, so evaluation matches `dotnet build` exactly, including NuGet-delivered and workload SDKs. NativeAOT is deferred, not dropped (see [NativeAOT note](notes/nativeaot.md)): Microsoft.Build evaluates under AOT since 18.10, but the SDK's plugin resolvers do not load yet and the gain is about 400 ms of JIT warmup per run. Until then, every decision keeps the AOT path open:
+  - `IsAotCompatible` is on for every MIDA assembly from day one and warnings are errors, so trim- and AOT-unsafe code cannot land.
+  - No reflection-based plugin loading, runtime code generation or reflection-based serialization of our own. JSON goes through source generators.
+  - Dependencies must be trim-clean or easy to replace. Prefer the BCL.
+  - MSBuild is reached only through the evaluation object model, behind one seam, so MSBuildLocator can later be swapped for a bundled engine with in-process registered SDK resolvers.
 - **CI-system agnostic.** Last-green ref per branch and affected matrix are MIDA outputs; GitHub Actions, Google Cloud Build, Azure Pipelines and GitLab consume them.
 
 ### 1.7 Non-goals (v1)
