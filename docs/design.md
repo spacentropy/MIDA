@@ -9,14 +9,14 @@ MIDA is a monorepo tool for .NET. It makes one repository with hundreds of proje
 ### 1.1 Superfast builds
 
 - **Build only what changed.** Affected detection from the MSBuild project graph and the git diff, including package-version changes in Central Package Management.
-- **Never build the same thing twice, on any machine.** A remote cache in plain object storage (GCS first, then S3 and Azure Blob), or in the CI provider's own cache (GitHub Actions cache) where a bucket is not wanted. A cache hit is indistinguishable from a build: the key is the MSBuild-evaluated inputs plus dependency reference-assembly hashes, and restored outputs work regardless of machine or checkout path.
+- **Never build the same thing twice, on any machine of the same platform.** A remote cache in plain object storage (GCS first, then S3 and Azure Blob), or in the CI provider's own cache (GitHub Actions cache) where a bucket is not wanted. A cache hit is indistinguishable from a build: the key is the MSBuild-evaluated inputs plus dependency reference-assembly hashes, and restored outputs work regardless of checkout path. OS and architecture are in the key, because outputs include a native apphost.
 - **One MSBuild invocation per run, not one per project.** Use the static graph so evaluation and startup costs are paid once.
 - **Local first.** The same cache logic serves a developer's machine, so `mida build` after `git pull` is a cache restore, not a rebuild.
 
 ### 1.2 Superfast tests
 
 - **Run only the tests that can be affected**, at project level first, with test-level impact as a later layer.
-- **Cache test results** keyed the same way as build outputs. An unchanged test project with unchanged dependencies is not re-run.
+- **Cache test results** keyed like build outputs, except that dependencies count by implementation, not reference assembly: a method body edit leaves the API unchanged but can change what a test sees. An unchanged test project with unchanged dependencies is not re-run.
 - **Shard across CI runners** from the graph, balanced by recorded test durations.
 - **Collect coverage without slowing the run**, merged across shards into one report per run.
 
@@ -46,7 +46,7 @@ MIDA is a monorepo tool for .NET. It makes one repository with hundreds of proje
   - `IsAotCompatible` is on for every MIDA assembly from day one and warnings are errors, so trim- and AOT-unsafe code cannot land.
   - No reflection-based plugin loading, runtime code generation or reflection-based serialization of our own. JSON goes through source generators.
   - Dependencies must be trim-clean or easy to replace. Prefer the BCL.
-  - MSBuild is reached only through the evaluation object model, behind one seam, so MSBuildLocator can later be swapped for a bundled engine with in-process registered SDK resolvers.
+  - MSBuild is reached through the evaluation object model and, for the project-cache plugin, `BuildManager`, all inside `src/Mida`, so MSBuildLocator can later be swapped for a bundled engine with in-process registered SDK resolvers. Whether `BuildManager` and Prediction work under AOT is unchecked.
 - **CI-system agnostic.** Last-green ref per branch and affected matrix are MIDA outputs; GitHub Actions, Google Cloud Build, Azure Pipelines and GitLab consume them.
 
 ### 1.7 Non-goals (v1)

@@ -76,7 +76,7 @@ Traps: `Hash` is order-sensitive, so a hand-picked target list produced a wrong 
 
 ## Not tested
 
-- Hits through the plugin. This spike copied files and ran `dotnet test` by hand. A project that misses while its dependencies hit is milestone 2.
+- Hits through the plugin. This spike copied files and ran `dotnet test` by hand. [Milestone 2](project-cache-plugin.md) covered that, including a project that misses while its dependencies hit.
 - Linux and Windows.
 - Release configuration. The real-repo runs were Debug.
 - Copy-on-write outside APFS. ext4 has no reflinks, so a plain copy may dominate there.

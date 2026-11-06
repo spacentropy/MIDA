@@ -62,11 +62,11 @@ SDK 10 and 11 only, the supported versions. Projects may target older frameworks
 - The plugin API in `Microsoft.Build.ProjectCache` is identical in MSBuild 18.9 (SDK 10) and 18.12 (SDK 11), so one source tree serves both. SDK 8 had only `Microsoft.Build.Experimental.ProjectCache`.
 - A host cannot load MSBuild from an SDK newer than its runtime. Both builds of the tool are needed: the `net11.0` build loaded SDK 10 and 11, the `net10.0` build loaded SDK 10.
 - **A `net10.0` host in a repo pinned to SDK 11 silently picks SDK 10** and fails with `NETSDK1045`, because the Locator filters out SDKs it cannot load and ignores `global.json`. The tool should compare the loaded SDK with the pinned one and report that plainly.
-- `Directory.Build.props` in this repo needs changing before `src/Mida` compiles for both: it sets a single `TargetFramework`, and `runtime-async` needs a condition if it is .NET 11 only.
+- `Directory.Build.props` now multi-targets, with `runtime-async` on `net11.0` only.
 
 ## Not tested
 
-- Real key computation, which is milestone 3. Hits and misses were forced.
+- Hits decided by real keys. Hits and misses were forced here. [Keys now exist](cache-key.md), and joining the two is milestone 4.
 - A hit resolving references to another hit, and dependency content files. The spike overlaid DLLs and PDBs for a missed dependency. Files that a dependency copies to output, such as `appsettings.json`, take the same path and need a test.
 - Overlaying on a dependent's `deps.json`, which was unchanged here. A dependency's package change alters the dependent's restore output, so it should change the key.
 - Linux, Windows and Release builds.
