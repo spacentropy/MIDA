@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Mida/Mida.csproj" />
+  <Project Path="tests/Mida.Tests/Mida.Tests.csproj" />
+</Solution>

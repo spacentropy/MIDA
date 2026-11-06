@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <IsTestProject>true</IsTestProject>
+        <!-- xUnit needs public test classes and CA1515 wants them internal in an Exe. -->
+        <NoWarn>$(NoWarn);CA1515</NoWarn>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.2" />
+    </ItemGroup>
+    <ItemGroup>
+        <ProjectReference Include="../../src/Mida/Mida.csproj" />
+    </ItemGroup>
+</Project>

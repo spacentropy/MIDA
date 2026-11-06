@@ -1,6 +1,7 @@
 <Project>
     <PropertyGroup>
-        <TargetFramework>net11.0</TargetFramework>
+        <!-- A host cannot load MSBuild from an SDK newer than its runtime. See docs/notes/project-cache-plugin.md -->
+        <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <Company>Gleb Lesnikov</Company>
@@ -15,6 +16,8 @@
         <PackageProjectUrl>https://github.com/spacentropy/MIDA</PackageProjectUrl>
         <PackageReleaseNotes>https://github.com/spacentropy/MIDA/releases</PackageReleaseNotes>
 
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
         <Features>$(Features);runtime-async=on</Features>
     </PropertyGroup>
 </Project>
