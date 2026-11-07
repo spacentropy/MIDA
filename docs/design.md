@@ -11,7 +11,7 @@ MIDA is a monorepo tool for .NET. It makes one repository with hundreds of proje
 - **Build only what changed.** Affected detection from the MSBuild project graph and the git diff, including package-version changes in Central Package Management.
 - **Never build the same thing twice, on any machine of the same platform.** A remote cache in plain object storage (GCS first, then S3 and Azure Blob), or in the CI provider's own cache (GitHub Actions cache) where a bucket is not wanted. A cache hit is indistinguishable from a build: the key is the MSBuild-evaluated inputs plus dependency reference-assembly hashes, and restored outputs work regardless of checkout path. OS and architecture are in the key, because outputs include a native apphost.
 - **One MSBuild invocation per run, not one per project.** Use the static graph so evaluation and startup costs are paid once.
-- **Local first.** The same cache logic serves a developer's machine, so `mida build` after `git pull` is a cache restore, not a rebuild.
+- **Built for CI.** MIDA runs on CI runners. Laptops run it only to develop MIDA itself, so hitting CI's entries from a laptop is not a goal. Local incremental builds already work without it.
 
 ### 1.2 Superfast tests
 
@@ -47,6 +47,7 @@ MIDA is a monorepo tool for .NET. It makes one repository with hundreds of proje
   - No reflection-based plugin loading, runtime code generation or reflection-based serialization of our own. JSON goes through source generators.
   - Dependencies must be trim-clean or easy to replace. Prefer the BCL.
   - MSBuild is reached through the evaluation object model and, for the project-cache plugin, `BuildManager`, all inside `src/Mida`, so MSBuildLocator can later be swapped for a bundled engine with in-process registered SDK resolvers. Whether `BuildManager` and Prediction work under AOT is unchecked.
+- **Trusted environment.** MIDA runs only on the team's own CI, against a bucket only that CI writes, so security of the cache is a low priority. Validating what the store returns guards against bugs and corruption, not attackers.
 - **CI-system agnostic.** Last-green ref per branch and affected matrix are MIDA outputs; GitHub Actions, Google Cloud Build, Azure Pipelines and GitLab consume them.
 
 ### 1.7 Non-goals (v1)
