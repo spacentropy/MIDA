@@ -1,6 +1,6 @@
 # MIDA MVP plan
 
-Status: plan, 2026-11-01, updated 2026-11-07 after milestones 1 to 4 and an adversarial review. **Next: [milestone 4b](#4b-fixes-from-the-adversarial-review).** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md).
+Status: plan, 2026-11-01, updated 2026-11-07 after milestones 1 to 4 and an adversarial review. **Next: [milestone 4b](#4b-fixes-from-the-adversarial-review).** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md).
 
 ## Goal
 
@@ -14,7 +14,7 @@ Milestones 1 to 4 are done, and milestone 4b is next: an adversarial review foun
 
 Designed but not built: the GCS store, `--read-only`, the summary's time saved.
 
-Diagnostics today: `--cache <dir>` to use a store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 66 on net10.0 and 67 on net11.0, including real builds and real test runs of a small repo. After a failed build, `--no-build` runs stale binaries, so check the build first.
+Diagnostics today: `--cache <dir>` to use a store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 73 on net10.0 and 74 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
 
 The cache has run on a five-project repo on macOS arm64 and Linux arm64. It has not run on the 49-project repo yet, so the 3 s hit is a sum of spike timings, not a measurement.
 
@@ -28,7 +28,7 @@ In:
 - Local disk store, then GCS. Read-only mode for PR runners. MIDA is a CI tool: laptops run it only to develop MIDA itself, so laptop hits on CI entries are not a goal. Platform and the exact SDK patch are in the key anyway, so a Mac would never hit Linux CI entries.
 - Console summary: hits, misses, time saved.
 
-Next after the MVP: test running and caching, the other half of CI time. Test keys must hash dependency implementations, not reference assemblies.
+Next after the MVP: test running and caching, the other half of CI time. Test keys must hash dependency implementations, not reference assemblies. The generated repo in [benchmarks.md](notes/benchmarks.md) is the oracle: after an edit, `mida test` must run exactly the test projects in the dependent closure.
 
 Later: selective NuGet caching from the bucket, fetching only the packages that projects missing the cache need. A cold restore takes 15.7 s on the test repo against 1.8 s with packages present, the largest part of a hit on a fresh runner. Until then CI caches `~/.nuget/packages` itself. The catch: the key reads `project.assets.json`, and restore needs every package to write it, so a selective fetch needs another source for resolved versions, such as `packages.lock.json`.
 
@@ -118,7 +118,7 @@ Added 2026-11-07, not started. Two reviews of the finished milestone 4 by a seco
    - Hash reference assemblies with the version attributes masked (`AssemblyVersion`, `AssemblyFileVersion`, `AssemblyInformationalVersion`), through `System.Reflection.Metadata`. First check that a hit dependent compiled against an older `AssemblyVersion` still binds at run time.
    - Or document that these tools defeat early cutoff during Build, and that hits serve stale version stamps, which only matters at pack and publish.
 
-4. **Measure the real repo, and not only on APFS.** Run the 49-project repo: hit time with restore, store overhead on a miss, the cost of its five web projects (which always miss now, along with what copies their manifests), and the version-stamping effect if it stamps. Run it on ext4 as well. The 3 s hit relies on APFS cloning (0.9 s), against a plain copy's 18 to 19 s, which is close to the 22 to 28 s compile. If copying dominates there, store files that come from NuGet packages as references to the package folder, like dependency copies, so they are neither stored nor uploaded. Most of the 3.8 GB is package DLLs copied into every `bin/`. Hard links are another option for the local tier. Record the numbers in `docs/notes/local-store.md`, and update the risks.
+4. **Measure the real repo, and not only on APFS.** First profile what the generated 1024-project benchmark found: 74 misses among 950 hits took 84 s, slower than 1024 misses at 51 s, so the miss-after-hit path is superlinear ([benchmarks.md](notes/benchmarks.md)). Then run the 49-project repo: hit time with restore, store overhead on a miss, the cost of its five web projects (which always miss now, along with what copies their manifests), and the version-stamping effect if it stamps. Run it on ext4 as well. The 3 s hit relies on APFS cloning (0.9 s), against a plain copy's 18 to 19 s, which is close to the 22 to 28 s compile. If copying dominates there, store files that come from NuGet packages as references to the package folder, like dependency copies, so they are neither stored nor uploaded. Most of the 3.8 GB is package DLLs copied into every `bin/`. Hard links are another option for the local tier. Record the numbers in `docs/notes/local-store.md`, and update the risks.
 
 Smaller, take them when nearby:
 
