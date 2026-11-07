@@ -78,7 +78,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             ["ExcludeRestorePackageImports"] = "true",
         };
         var request = new BuildRequestData(options.Solution, properties, null, ["Restore"], null, BuildRequestDataFlags.ClearCachesAfterBuild);
-        var parameters = new BuildParameters(collection) { Loggers = Loggers(), EnableNodeReuse = false };
+        var parameters = new BuildParameters(collection) { Loggers = Loggers(), MaxNodeCount = Environment.ProcessorCount, EnableNodeReuse = false };
         return BuildManager.DefaultBuildManager.Build(parameters, request).OverallResult == BuildResultCode.Success;
     }
 

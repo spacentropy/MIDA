@@ -31,23 +31,24 @@ Run: `dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/
 
 ## Numbers
 
-macOS 27.2.0 arm64 (APFS), SDK 10, Debug, 2026-11-07. The generated projects are one class each, so compile is nearly free and these numbers are the cache's overhead, not its saving. The real saving shows on a repo whose compile costs something: see [local-store.md](local-store.md) and plan 4b item 4.
+macOS 27.2.0 arm64 (APFS), SDK 10, Debug, 2026-11-07. The 8 and 128 columns predate the restore fix below, so they overstate restore. The generated projects are one class each, so compile is nearly free and these numbers are the cache's overhead, not its saving. The real saving shows on a repo whose compile costs something: see [local-store.md](local-store.md) and plan 4b item 4.
 
 | scenario | 8 | 128 | 1024 |
 |---|---|---|---|
-| dotnet build, cold | 0.7 s | 3.9 s | 26.7 s |
-| mida build, empty cache | 1.8 s | 9.1 s | 51.2 s |
-| mida build, clean clone, all hits | 0.8 s | 5.2 s | 33.4 s |
-| body edit of the widest leaf, 1 miss | 0.8 s | 5.1 s | 33.5 s |
-| API edit of the widest leaf, closure misses | 1.3 s (5) | 6.6 s (23) | 84.2 s (74) |
+| dotnet build, cold | 0.7 s | 3.9 s | 29.1 s |
+| mida build, empty cache | 1.8 s | 9.1 s | 43.2 s |
+| mida build, clean clone, all hits | 0.8 s | 5.2 s | 24.5 s |
+| body edit of the widest leaf, 1 miss | 0.8 s | 5.1 s | 25.0 s |
+| API edit of the widest leaf, closure misses | 1.3 s (5) | 6.6 s (23) | 62.0 s (74) |
 | cache size | 39 MB | 47 MB | 111 MB |
 | key computation | 0.01 s | 0.2 s | 2 s |
 
 Findings:
 
-- At 1024 projects an all-hit run is slower than a cold `dotnet build`. Restore is in both, so the difference is store and plugin overhead of roughly 7 ms per project on top of MSBuild. On real projects the compile it skips is far larger, but this is the floor.
-- A miss costs about 24 ms per project over a plain build at 1024 (51 s against 27 s). Storing is the likely cost.
-- **74 misses among 950 hits took 84 s, slower than 1024 misses (51 s).** Something in the miss-after-hit path is superlinear: candidates are `RemoveObsolete`, the dependency-files scan, or the once-per-run blob check in `OutputCache.RestoreAsync`. Not investigated. First thing to profile before 4b item 4.
+- The first 1024 run had an all-hit run slower than a cold `dotnet build` (33 s against 27 s). The phases were restore 21.5 s, graph evaluation 6.4 s, prediction 0.9 s, graph build with 1024 hits 6 s. The in-process restore had no `MaxNodeCount`, so it ran on one node; with `ProcessorCount` it takes 11 s, the same as `dotnet restore`, and the table above is after that fix.
+- MSBuild's floor on this repo is most of every row: a warm `dotnet build --no-restore` with nothing to compile takes 18.8 s, and compile is 2 to 3 s of the cold build. A cache can only remove compile, so here an all-hit run can at best be a few seconds under cold. Overhead per project: about 11 ms to evaluate, 6 ms per hit in the build including the key. If the benchmark should show a saving rather than a floor, give the generator a classes-per-project knob.
+- A miss costs about 14 ms per project over a plain build at 1024 (43 s against 29 s). Storing is the likely cost.
+- **74 misses among 950 hits took 62 s, slower than 1024 misses (43 s).** Something in the miss-after-hit path is superlinear: candidates are `RemoveObsolete`, the dependency-files scan, or the once-per-run blob check in `OutputCache.RestoreAsync`. Not investigated. First thing to profile before 4b item 4.
 
 ## Real-world repos
 
