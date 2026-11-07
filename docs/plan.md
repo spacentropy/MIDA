@@ -1,6 +1,6 @@
 # MIDA MVP plan
 
-Status: plan, 2026-11-01, updated 2026-11-06 after milestones 1 to 3. Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md).
+Status: plan, 2026-11-01, updated 2026-11-07 after milestones 1 to 4. Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md).
 
 ## Goal
 
@@ -10,13 +10,13 @@ Everything else in the design (affected detection, tests, publish, metrics, cove
 
 ## Current state
 
-Milestones 1 to 3 are done. `mida build [solution]` restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project. **Nothing is stored or restored yet, so every project is a miss** and no key is read back.
+Milestones 1 to 4 are done. `mida build [solution]` restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project, restores a hit from the local store, and stores a miss. A clean clone at another path is all hits and `dotnet test --no-build` passes on it. See [local-store.md](notes/local-store.md).
 
-Designed but not built: `Mida.Store`, the manifest, target-result replay, dependency references and copy-on-write materialization. Replay and the overlay behind dependency references were proven in throwaway spikes, whose code was not kept. [project-cache-plugin.md](notes/project-cache-plugin.md) records the API calls.
+Designed but not built: the GCS store, `--read-only`, the summary's time saved.
 
-Diagnostics today: `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --solution MIDA.slnx`, 35 across both target frameworks, including real builds of a small repo.
+Diagnostics today: `--cache <dir>` to use a store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --solution MIDA.slnx`, 73 across both target frameworks, including real builds and real test runs of a small repo.
 
-Everything so far ran on macOS arm64 only. CI is the target and is likely Linux.
+The cache has run on a five-project repo on macOS arm64 and Linux arm64. It has not run on the 49-project repo yet, so the 3 s hit is a sum of spike timings, not a measurement.
 
 ## Scope
 
@@ -44,7 +44,7 @@ Out, named so nobody builds them by accident: multi-targeting, publish, OpenTele
 | Outputs | Predicted output directories scanned after the build, minus the exclusions in [relocation.md](notes/relocation.md). File contents are not rewritten and timestamps are left alone. Manifest paths stay relative to the repo root, and replayed target results carry `{RepoRoot}`. Files in `bin/` that came from a project dependency are stored as references and resolved to its current file on every hit, because the ref-based key does not cover them ([why](notes/project-cache-plugin.md#stale-dependency-copies)). Target results serialized as JSON through source generators and replayed on a hit | Borrowed from [MSBuildCache](https://github.com/microsoft/MSBuildCache) (MIT). Replayed results are the spec's "most correct" hit option. |
 | Injected properties | `mida build` always passes `ContinuousIntegrationBuild=true` and `IncludeSourceRevisionInInformationalVersion=false` as global properties, on CI and laptops. Nothing is added to the repo | Portable PDB paths and byte-identical outputs; a commit SHA in the reference assembly would defeat early cutoff. Global properties are in the key, so laptops must match CI to get hits. See [relocation.md](notes/relocation.md). |
 | Restore | Not cached. `mida build` runs restore first, then the cached graph build | Same as MSBuildCache. `project.assets.json` carries absolute paths. |
-| Store | `IObjectStore` from [the note](notes/build-cache-object-store.md): content-addressed blobs plus manifests, create-only writes, SHA-256 verified on read. Local filesystem implementation first | No server. No BuildXL cache libraries: they pull RocksDB native binaries and are not trim-clean. |
+| Store | `IObjectStore` from [the note](notes/build-cache-object-store.md), cut to four methods that take paths so a filesystem store can clone: content-addressed blobs plus manifests, create-only writes, SHA-256 verified on read, once per blob per run. Local filesystem implementation first | No server. No BuildXL cache libraries: they pull RocksDB native binaries and are not trim-clean. |
 | Failures | A key that cannot be computed, or any store failure, is a miss with a warning. It never fails the build | The cache must not become a new way to break CI. An exception that escapes a plugin hook does fail the build, so the plugin catches them. |
 | Not used | BuildXL as executor, BuildXL cache libraries, MSBuildCache's Detours-based add path | Executor constraint, dependency weight, Windows-only. |
 
@@ -52,12 +52,12 @@ Out, named so nobody builds them by accident: multi-targeting, publish, OpenTele
 
 ```
 src/Mida/          CLI, MSBuild hosting (Locator), project-cache plugin, key computation
-src/Mida.Store/    IObjectStore, manifest model, local filesystem store, GCS store. No MSBuild dependency, AOT-clean. Not created yet: milestone 4
-tests/Mida.Tests/  xUnit v3 on Microsoft.Testing.Platform (set in global.json)
-MIDA.slnx          Both projects
+src/Mida.Store/    IObjectStore, manifest model, restore and save, local filesystem store, GCS store. No MSBuild dependency, AOT-clean
+tests/Mida.Tests/  TUnit on Microsoft.Testing.Platform (set in global.json)
+MIDA.slnx          All three projects
 ```
 
-Conventions already in place: `Directory.Build.props` (warnings as errors, all analyzers, `IsAotCompatible`, `net10.0;net11.0`, `runtime-async` on `net11.0` only), SDK pinned in `global.json`. Only `src/Mida` may reference packages that are not trim-clean (Locator, Prediction). Keep MSBuild types out of `Mida.Store`. MSBuild packages compile against 18.9.6, the oldest supported API, with `ExcludeAssets="runtime" PrivateAssets="all"` so the SDK's copies load at run time; Prediction brings `Microsoft.NET.StringTools` in, so that one needs the same treatment. Code that touches Microsoft.Build types must sit in a method that runs after `MSBuildLocator.RegisterDefaults()`, otherwise the JIT binds the types before the SDK path is registered.
+Conventions already in place: `Directory.Build.props` (warnings as errors, all analyzers, `IsAotCompatible`, `net10.0;net11.0`, `runtime-async` on `net11.0` only), SDK pinned in `global.json`. Tests use TUnit only, including test projects that fixtures generate; the test project is the one place `IsAotCompatible` is off, because it never ships. Only `src/Mida` may reference packages that are not trim-clean (Locator, Prediction). Keep MSBuild types out of `Mida.Store`. MSBuild packages compile against 18.9.6, the oldest supported API, with `ExcludeAssets="runtime" PrivateAssets="all"` so the SDK's copies load at run time; Prediction brings `Microsoft.NET.StringTools` in, so that one needs the same treatment. Code that touches Microsoft.Build types must sit in a method that runs after `MSBuildLocator.RegisterDefaults()`, otherwise the JIT binds the types before the SDK path is registered.
 
 ## Milestones
 
@@ -89,13 +89,26 @@ Done when: the key is identical on two checkouts at different paths; it changes 
 
 ### 4. Local store, end to end
 
+Done 2026-11-07, see [local-store.md](notes/local-store.md). All of it passes on macOS arm64 and Linux arm64, against a five-project repo, with `dotnet test --no-build` running real tests on the hits. Not yet run on the 49-project repo, so its 3 s hit is unmeasured. Do that before milestone 5.
+
+Changes from the plan:
+
+- `File.Copy` clones, so no P/Invoke was needed, and `IObjectStore` takes paths.
+- Copied files reach dependents through the key, not references.
+- A new satellite assembly needed a `dependency-files` key line.
+- `*.CoreCompileInputs.cache` and `*.GeneratedMSBuildEditorConfig.editorconfig` are left out, so manifests are byte-identical across checkouts of one commit.
+- After review: a hit deletes outputs its manifest does not list and a miss clears them first, manifests are validated before any file moves, and read-only files are replaceable on Windows.
+- A project with static web assets is not stored, because its manifests name the checkout. On SDK 11 that is every Web SDK project. The 49-project repo has five, so measure what that costs when it runs, and relocate these manifests if the cost is real.
+
+The test suite also moved from xUnit v3 to TUnit, and the stale-copy mutation checks were repeated on it.
+
 `IObjectStore` plus the filesystem implementation under `~/.mida/cache`, manifest format including dependency references, upload after a miss, materialize on a hit using copy-on-write where the filesystem has it. Blobs are per file: outputs on the test repo dedupe 7.9x ([relocation.md](notes/relocation.md)). Replay target results for every requested target, with `{RepoRoot}` restored. Normalize predicted output directories, which came back with mixed separators on macOS (`obj\Debug/net8.0/`).
 
 Done when: `mida build` on a clean clone at a different path reports all hits, and `dotnet test --no-build` passes on the result. After a method body edit in a library, a test covering that code fails, both when the library misses and when it hits from a newer entry than its dependents. The same holds for a file the library copies to output, such as `appsettings.json`. A manifest whose blob is missing is a miss, not an error. All of it also passes on Linux.
 
 ### 5. GCS store
 
-Create-only writes with `ifGenerationMatch=0`, 412 treated as success, SHA-256 verified on read, `--read-only`. Auth through Application Default Credentials. Replayed target results may hold package paths, so add a `{NugetPackageRoot}` token if they do.
+A remote store behind the local one, so every hit still restores by cloning from local disk. Create-only writes with `ifGenerationMatch=0`, 412 treated as success, SHA-256 verified on read, `--read-only`. Auth through Application Default Credentials. Replayed target results may hold package paths, so add a `{NugetPackageRoot}` token if they do.
 
 Done when: a hit crosses two machines, or two clones with the local tier disabled, with different NuGet roots; a second writer with a different manifest for the same key is logged, not written.
 
@@ -105,7 +118,8 @@ Done when: a hit crosses two machines, or two clones with the local tier disable
 
 ## Known risks
 
-- Everything so far ran on macOS arm64 only, in Debug. Linux, Windows and Release builds are unproven, and Linux is the likely CI target.
+- Everything so far ran in Debug, on macOS arm64 and Linux arm64. Windows, Linux x64 and Release builds are unproven, and the store has not met a repo of real size.
+- Nothing evicts `~/.mida/cache`, so it grows without limit.
 - The plugin API was experimental until recently and moved namespace between SDK 8 and 10, so a future SDK can break it. The fallback is driving `dotnet build` per project ourselves; keys and the store would not change.
 - Real source generators are untested: the build-time dependency rule was checked with a plain library.
 - Multi-targeted projects get no key and build normally, so they gain nothing and their dependents still work.
@@ -115,6 +129,6 @@ Done when: a hit crosses two machines, or two clones with the local tier disable
 - Version stamping (SourceLink, MinVer, GenerateAssemblyInfo) changes outputs per commit. Keep it out of the key for Build; revisit at pack and publish. The default commit SHA in `AssemblyInformationalVersion` also reaches the reference assembly, so it must stay off during Build ([relocation.md](notes/relocation.md)). A tool like MinVer that stamps a per-commit version would need the same check.
 - A missed dependency reference means tests run against stale code and pass. Every change to the manifest or key must keep the milestone 4 stale check.
 - A plain `dotnet build` or `dotnet test` after `mida build` recompiles everything (49 of 49 on the test repo), so a CI step that forgets `--no-build` silently loses the saving. If local no-op builds become a goal, the recipe is in [relocation.md](notes/relocation.md).
-- A plain copy of outputs takes about as long as compiling them (18.9 s against 27.7 s on the test repo). On filesystems without copy-on-write, such as ext4, a local hit may save little.
+- A plain copy of outputs takes about as long as compiling them (18.9 s against 27.7 s on the test repo). On filesystems without copy-on-write, such as ext4, a local hit may save little. Whether `File.Copy` reflinks on Linux is untested.
 - Outputs of `mida build` carry `/_/` source paths, which may hurt debugging them locally. Untested. Plain `dotnet build` is unaffected.
 - `IsAotCompatible` only checks our own calls. Publish a throwaway AOT console that references `Mida.Store` now and then to catch dependency drift.

@@ -66,9 +66,9 @@ SDK 10 and 11 only, the supported versions. Projects may target older frameworks
 
 ## Not tested
 
-- Hits decided by real keys. Hits and misses were forced here. [Keys now exist](cache-key.md), and joining the two is milestone 4.
-- A hit resolving references to another hit, and dependency content files. The spike overlaid DLLs and PDBs for a missed dependency. Files that a dependency copies to output, such as `appsettings.json`, take the same path and need a test.
+[Milestone 4](local-store.md) covered hits decided by real keys, a hit resolving references to another hit, dependency content files, and Linux.
+
 - Overlaying on a dependent's `deps.json`, which was unchanged here. A dependency's package change alters the dependent's restore output, so it should change the key.
-- Linux, Windows and Release builds.
+- Windows and Release builds.
 - How `dotnet tool install` picks between target frameworks.
 - Different NuGet roots with replayed items.

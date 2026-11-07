@@ -1,5 +1,4 @@
 using System.Text;
-using Xunit;
 
 namespace Mida.Tests;
 
@@ -19,13 +18,13 @@ public sealed class PackageFingerprintTests
 
     private static string Fingerprint(string assets) => PackageFingerprint.Compute(Encoding.UTF8.GetBytes(assets));
 
-    [Fact]
-    public void AbsolutePathsDoNotMatter() => Assert.Equal(
-        Fingerprint(Assets("/home/ci/.nuget/", "/work/a/App.csproj", "1.0.0")),
-        Fingerprint(Assets("/Users/me/.nuget/", "/src/b/App.csproj", "1.0.0")));
+    [Test]
+    public async Task AbsolutePathsDoNotMatter() =>
+        await Assert.That(Fingerprint(Assets("/Users/me/.nuget/", "/src/b/App.csproj", "1.0.0")))
+            .IsEqualTo(Fingerprint(Assets("/home/ci/.nuget/", "/work/a/App.csproj", "1.0.0")));
 
-    [Fact]
-    public void ResolvedVersionMatters() => Assert.NotEqual(
-        Fingerprint(Assets("/x/", "/y/App.csproj", "1.0.0")),
-        Fingerprint(Assets("/x/", "/y/App.csproj", "1.0.1")));
+    [Test]
+    public async Task ResolvedVersionMatters() =>
+        await Assert.That(Fingerprint(Assets("/x/", "/y/App.csproj", "1.0.1")))
+            .IsNotEqualTo(Fingerprint(Assets("/x/", "/y/App.csproj", "1.0.0")));
 }

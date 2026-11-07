@@ -16,6 +16,7 @@ A key is the SHA-256 of sorted text lines. `mida build --key-details <dir>` writ
 | `missing` | Predicted inputs that do not exist | A file appearing must change the key |
 | `packages` | Hash of four sections of `project.assets.json` | What was resolved, without the absolute paths in the rest of the file |
 | `dependency-ref` | Hash of each transitive dependency's reference assembly | Early cutoff: a body edit stops at its project |
+| `dependency-files` | Hash of the file names in each transitive dependency's `bin/` | A new file there, such as a satellite assembly, reaches dependents' `bin/` with no API change |
 | `dependency-key` | The key of a dependency that runs at build time | See below |
 
 Not read: anything under the dotnet root, the NuGet root, or any project's `BaseIntermediateOutputPath` or `BaseOutputPath`. The SDK and packages are covered by version, and outputs are not inputs.

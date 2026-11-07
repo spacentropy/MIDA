@@ -22,6 +22,9 @@ Everything under each project's `bin/` and `obj/`, except:
 | `project.assets.json`, `*.nuget.*`, `project.nuget.cache` | Owned by restore, hold absolute paths |
 | `*.assets.cache`, `*AssemblyReference.cache` | Incremental-build caches, not needed on a hit |
 | `*.FileListAbsolute.txt` | Holds the writer's absolute paths. Only `dotnet clean` and incremental clean read it |
+| `*.CoreCompileInputs.cache`, `*.GeneratedMSBuildEditorConfig.editorconfig` | Added in [milestone 4](local-store.md): differ per checkout, and only an incremental build reads them |
+
+**Correction, milestone 4:** "No file contents are rewritten" holds only without static web assets. Their manifests hold absolute content roots, so such a project is [not stored](local-store.md#decisions). The real repo's unit tests did not surface this, because the writer's checkout still existed and they do not start the web apps.
 
 ## Injected properties
 
@@ -77,7 +80,7 @@ Traps: `Hash` is order-sensitive, so a hand-picked target list produced a wrong 
 ## Not tested
 
 - Hits through the plugin. This spike copied files and ran `dotnet test` by hand. [Milestone 2](project-cache-plugin.md) covered that, including a project that misses while its dependencies hit.
-- Linux and Windows.
+- Windows. Linux is covered by a small repo in [milestone 4](local-store.md).
 - Release configuration. The real-repo runs were Debug.
 - Copy-on-write outside APFS. ext4 has no reflinks, so a plain copy may dominate there.
 - `/_/` source paths in a debugger, for someone debugging `mida build` outputs. Plain `dotnet build` is unaffected.

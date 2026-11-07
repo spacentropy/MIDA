@@ -1,14 +1,14 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Graph;
 using Microsoft.Build.Prediction;
+using Mida.Store;
 
 namespace Mida;
 
 internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> excludedRoots, IReadOnlyList<string> environment)
 {
-    private static readonly StringComparison PathComparison =
+    public static readonly StringComparison PathComparison =
         OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     // Say which solution started the build, not what to build. CurrentSolutionConfigurationContents lists every
@@ -29,6 +29,7 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
     private readonly ConcurrentDictionary<string, string> fileHashes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string?> inputLines = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<ProjectGraphNode, HashSet<string>> buildTimeReferences = new();
+    private readonly ConcurrentDictionary<ProjectGraphNode, HashSet<string>> outputNames = new();
     private readonly string repoPrefix = WithSeparator(repoRoot);
 
     /// <summary>
@@ -73,7 +74,63 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
         return CacheKey.From(lines);
     }
 
-    private static string WithSeparator(string path)
+    /// <summary>
+    /// Maps files of a finished project's <c>bin/</c> to the dependency file they copy. Same relative path and same
+    /// bytes: bytes alone would tie together unrelated files that happen to match, such as two empty ones.
+    /// </summary>
+    public Dictionary<string, string> DependencyCopies(ProjectGraphNode node, IEnumerable<string> outputs)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        var directory = OutputDirectory(node.ProjectInstance);
+        var closure = new HashSet<ProjectGraphNode>();
+        AddClosure(node, closure);
+        var dependencies = closure.OrderBy(d => d.ProjectInstance.FullPath, StringComparer.Ordinal).ToList();
+
+        var copies = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var output in outputs.Where(o => o.StartsWith(directory, PathComparison)))
+        {
+            var name = Path.GetRelativePath(directory, output);
+            var source = dependencies
+                .Where(d => OutputNames(d).Contains(name))
+                .Select(d => Path.Combine(OutputDirectory(d.ProjectInstance), name))
+                .FirstOrDefault(file => HashFile(file) == HashFile(output));
+            if (source is not null)
+            {
+                copies[output] = source;
+            }
+        }
+
+        return copies;
+    }
+
+    private static void AddClosure(ProjectGraphNode node, HashSet<ProjectGraphNode> closure)
+    {
+        foreach (var dependency in node.ProjectReferences)
+        {
+            if (closure.Add(dependency))
+            {
+                AddClosure(dependency, closure);
+            }
+        }
+    }
+
+    private static string OutputDirectory(ProjectInstance project) =>
+        WithSeparator(AbsolutePath(project, project.GetPropertyValue("OutDir")) ?? project.Directory);
+
+    private HashSet<string> OutputNames(ProjectGraphNode node) => outputNames.GetOrAdd(node, static n =>
+    {
+        var directory = OutputDirectory(n.ProjectInstance);
+        return !Directory.Exists(directory)
+            ? []
+            :
+            [
+                .. Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
+                    .Where(f => ProjectOutputs.IsCached(Path.GetFileName(f)))
+                    .Select(f => Path.GetRelativePath(directory, f)),
+            ];
+    });
+
+    public static string WithSeparator(string path)
     {
         var normalized = path.Replace('\\', Path.DirectorySeparatorChar);
         return Path.EndsInDirectorySeparator(normalized) ? normalized : normalized + Path.DirectorySeparatorChar;
@@ -102,6 +159,9 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
             }
 
             lines.Add($"dependency-ref {name} {HashFile(ReferenceAssembly(dependency.ProjectInstance))}");
+
+            // A file joining a dependency's bin/, such as a new satellite assembly, leaves its reference assembly alone.
+            lines.Add($"dependency-files {name} {CacheKey.From(OutputNames(dependency)).Value}");
             AddDependencies(dependency, lines, dependencyKeys, seen);
         }
     }
@@ -135,14 +195,10 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
         return File.Exists(full) ? $"input {name} {HashFile(full)}" : $"missing {name}";
     }
 
-    private static string? AbsolutePath(ProjectInstance project, string path) =>
+    public static string? AbsolutePath(ProjectInstance project, string path) =>
         path.Length == 0 ? null : Path.GetFullPath(path.Replace('\\', Path.DirectorySeparatorChar), project.Directory);
 
     private string Relative(string path) => Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
 
-    private string HashFile(string path) => fileHashes.GetOrAdd(path, static p =>
-    {
-        using var stream = File.OpenRead(p);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
-    });
+    private string HashFile(string path) => fileHashes.GetOrAdd(path, OutputCache.Hash);
 }

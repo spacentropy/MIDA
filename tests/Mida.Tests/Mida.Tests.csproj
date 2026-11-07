@@ -2,11 +2,13 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <IsTestProject>true</IsTestProject>
-        <!-- xUnit needs public test classes and CA1515 wants them internal in an Exe. -->
-        <NoWarn>$(NoWarn);CA1515</NoWarn>
+        <!-- Never shipped, and TUnit's collection equivalence uses reflection. -->
+        <IsAotCompatible>false</IsAotCompatible>
+        <!-- Test classes stay public and CA1515 wants them internal in an Exe. Small file reads need no async. -->
+        <NoWarn>$(NoWarn);CA1515;CA1849</NoWarn>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="xunit.v3.mtp-v2" Version="4.0.2" />
+        <PackageReference Include="TUnit" Version="1.81.5" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="../../src/Mida/Mida.csproj" />

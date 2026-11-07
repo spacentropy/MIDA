@@ -1,24 +1,24 @@
-using Xunit;
-
 namespace Mida.Tests;
 
 public sealed class BuildOptionsTests
 {
-    [Fact]
-    public void ParsesEveryOption()
+    [Test]
+    public async Task ParsesEveryOption()
     {
-        var options = BuildOptions.Parse(["repo.sln", "--print-keys", "--key-details", "out"]);
+        var options = BuildOptions.Parse(["repo.sln", "--print-keys", "--key-details", "out", "--cache", "store"]);
 
         Assert.NotNull(options);
-        Assert.Equal(Path.GetFullPath("repo.sln"), options.Solution);
-        Assert.True(options.PrintKeys);
-        Assert.Equal(Path.GetFullPath("out"), options.KeyDetailsDirectory);
+        await Assert.That(options.Solution).IsEqualTo(Path.GetFullPath("repo.sln"));
+        await Assert.That(options.PrintKeys).IsTrue();
+        await Assert.That(options.KeyDetailsDirectory).IsEqualTo(Path.GetFullPath("out"));
+        await Assert.That(options.CacheDirectory).IsEqualTo(Path.GetFullPath("store"));
     }
 
-    [Theory]
-    [InlineData("repo.sln", "--unknown")]
-    [InlineData("repo.sln", "--key-details")]
-    [InlineData("one.sln", "two.sln")]
-    public void RejectsBadArguments(string first, string second) =>
-        Assert.Null(BuildOptions.Parse([first, second]));
+    [Test]
+    [Arguments("repo.sln", "--unknown")]
+    [Arguments("repo.sln", "--key-details")]
+    [Arguments("repo.sln", "--cache")]
+    [Arguments("one.sln", "two.sln")]
+    public async Task RejectsBadArguments(string first, string second) =>
+        await Assert.That(BuildOptions.Parse([first, second])).IsNull();
 }

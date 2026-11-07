@@ -7,6 +7,7 @@ using Microsoft.Build.Graph;
 using Microsoft.Build.Logging;
 using Microsoft.Build.Prediction;
 using Microsoft.Build.ProjectCache;
+using Mida.Store;
 
 namespace Mida;
 
@@ -40,7 +41,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         };
         var dotnetRoot = Path.GetFullPath(Path.Combine(sdkPath, "..", ".."));
         var keys = new KeyComputer(repoRoot, KeyComputer.ExcludedRoots(graph, dotnetRoot), environment);
-        var plugin = new MidaCachePlugin(keys, predictions, repoRoot);
+        var plugin = new MidaCachePlugin(keys, predictions, new OutputCache(new FileSystemStore(options.CacheDirectory), repoRoot), repoRoot);
 
         var parameters = new BuildParameters(collection)
         {
@@ -113,5 +114,6 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
         var seconds = plugin.KeyTime.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture);
         Console.WriteLine($"{plugin.Keys.Count} keys in {seconds} s, {plugin.Failures} not computable");
+        Console.WriteLine($"{plugin.Hits} hits, {plugin.Misses} misses");
     }
 }

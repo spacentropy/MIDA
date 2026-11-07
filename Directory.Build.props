@@ -11,6 +11,8 @@
         <EnableNETAnalyzers>true</EnableNETAnalyzers>
         <AnalysisMode>All</AnalysisMode>
         <AnalysisLevel>latest</AnalysisLevel>
+        <!-- A CLI has no SynchronizationContext to avoid. -->
+        <NoWarn>$(NoWarn);CA2007</NoWarn>
         <!-- NativeAOT is deferred, not dropped: keep every assembly trim/AOT-clean. See docs/notes/nativeaot.md -->
         <IsAotCompatible>true</IsAotCompatible>
         <PackageProjectUrl>https://github.com/spacentropy/MIDA</PackageProjectUrl>
