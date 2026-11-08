@@ -1,0 +1,17 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      # The tag without its v is the package version: v0.1.0 publishes 0.1.0.
+      - run: dotnet pack src/Mida -c Release -p:Version=${GITHUB_REF_NAME#v} -o out
+      - run: dotnet nuget push out/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json

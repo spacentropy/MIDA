@@ -52,7 +52,7 @@ internal sealed class GeneratedRepo
         Write(Root, "Repo.slnx", $"<Solution>{string.Concat(Projects.Select(p => $"""<Project Path="{p.Name}/{p.Name}.csproj" />"""))}</Solution>");
         Write(Root, "Directory.Build.props", "<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup></Project>");
         Write(Root, "Directory.Packages.props", """<Project><ItemGroup><PackageVersion Include="TUnit" Version="1.81.5" /></ItemGroup></Project>""");
-        Write(Root, "global.json", """{ "test": { "runner": "Microsoft.Testing.Platform" } }""");
+        Write(Root, "global.json", GlobalJson);
         foreach (var p in Projects)
         {
             var references = string.Concat(p.References.Select(Reference));

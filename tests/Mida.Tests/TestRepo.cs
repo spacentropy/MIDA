@@ -15,6 +15,22 @@ internal static class TestRepo
         </Project>
         """;
 
+    /// <summary>
+    /// The newest SDK of the runtime under test: the net10.0 build of mida cannot load SDK 11 and refuses to build
+    /// with another. The -alpha floor lets a prerelease SDK of that major match.
+    /// </summary>
+    public static string GlobalJson { get; } = $$"""
+        { "sdk": { "version": "{{Environment.Version.Major}}.0.100-alpha", "rollForward": "latestFeature", "allowPrerelease": true }, "test": { "runner": "Microsoft.Testing.Platform" } }
+        """;
+
+    /// <summary>A temp directory whose global.json every repo below it inherits.</summary>
+    public static string Temp()
+    {
+        var temp = Directory.CreateTempSubdirectory("mida-tests-").FullName;
+        Write(temp, "global.json", GlobalJson);
+        return temp;
+    }
+
     public static string Reference(string name) => $"""<ProjectReference Include="../{name}/{name}.csproj" />""";
 
     public static void Write(string root, string path, string content)
@@ -55,6 +71,9 @@ internal static class TestRepo
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // dotnet test points these at its own SDK, which would mix into the SDK the fixture's global.json selects.
+        start.Environment.Remove("MSBuildExtensionsPath");
+        start.Environment.Remove("MSBuildSDKsPath");
         if (packages is not null)
         {
             start.Environment["NUGET_PACKAGES"] = packages;

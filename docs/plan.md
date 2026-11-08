@@ -1,6 +1,6 @@
 # MIDA MVP plan
 
-Status: plan, 2026-11-01, updated 2026-11-08 after milestones 1 to 5, an adversarial review and 4b items 1 and 2. **Next: [milestone 6](#6-mvp-release), plus the decision in 4b item 3 and the real-repo run in 4b item 4.** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md).
+Status: plan, 2026-11-01, updated 2026-11-08 after milestones 1 to 5, an adversarial review, 4b items 1 and 2, and the code of milestone 6. **Next: the run against a real bucket and the first release tag in [milestone 6](#6-mvp-release), plus the decision in 4b item 3 and the real-repo run in 4b item 4.** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md).
 
 ## Goal
 
@@ -12,9 +12,9 @@ Everything else in the design (affected detection, tests, publish, metrics, cove
 
 Milestones 1 to 5 are done, and so are items 1 and 2 of milestone 4b and the profiling step of item 4. Item 3 and the real-repo measurement of item 4 are open. `mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache gs://<bucket>[/<prefix>]] [--read-only]` (`mida build --help` lists every option) restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project, restores a hit from the local store or through it from GCS, and stores a miss in both. A clean clone at another path is all hits and `dotnet test --no-build` passes on it. See [local-store.md](notes/local-store.md).
 
-Designed but not built: the summary's time saved.
+The summary ends with the time saved: each manifest stores how long its miss took, and a hit adds that up. `mida build` stops with an error when it cannot load the SDK `global.json` selects. It ships as the `mida` tool package, which a `v*` tag pushes to nuget.org.
 
-Diagnostics today: `--cache <dir>` to use a local store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 105 on net10.0 and 106 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. The GCS tests start fake-gcs-server in Docker and skip without it. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
+Diagnostics today: `--cache <dir>` to use a local store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 106 on net10.0 and 107 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. The GCS tests start fake-gcs-server in Docker and skip without it. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
 
 The cache has run on a five-project repo on macOS arm64 and Linux arm64. It has not run on the 49-project repo yet, so the 3 s hit is a sum of spike timings, not a measurement.
 
@@ -155,6 +155,15 @@ Hash each blob from the same read that uploads it: hashing and then copying sepa
 Done when: a hit crosses two machines, or two clones with the local tier disabled, with different NuGet roots; a second writer with a different manifest for the same key is logged, not written.
 
 ### 6. MVP release
+
+Code done 2026-11-08. Open: one run against a real bucket, and the first tag, which needs a `NUGET_API_KEY` secret in the repo.
+
+- Time saved: the manifest has a `buildTime`, from the plugin's miss answer to the project-finished hook, and a hit adds it up. It is summed over projects, so not wall-clock time. A second writer's manifest is compared with the build time left out, since every writer times differently. A manifest without the field reads as zero.
+- The SDK check is real, not hypothetical. MSBuildLocator skips an SDK newer than its runtime, so the `net10.0` build in a repo that pins SDK 11 loaded 10.0.403 without a word. `mida build` now runs `dotnet --version` in the solution's directory, from the dotnet the SDK came from, and stops when the two differ. The `net10.0` test run had that mismatch: fixtures built with SDK 10 and ran `dotnet test` with SDK 11. Fixtures now pin the newest SDK of the runtime under test, and the runner clears the `MSBuildExtensionsPath` and `MSBuildSDKsPath` that `dotnet test` sets, which mixed SDK 11 targets into a fixture's SDK 10 `dotnet pack`.
+- Found on the way: `mida build` without a solution always failed. A System.CommandLine validator's `GetValue` skips `DefaultValueFactory`, and every test passed the solution. The end-to-end tests now leave it out.
+- Packaging: `PackAsTool` with `tools/net10.0` and `tools/net11.0`, the README in the package, no MSBuild assemblies. Installed from a local feed with `dotnet tool install` and checked to build and hit. `.github/workflows/release.yml` packs on a `v*` tag, with the tag as the version, and pushes to nuget.org, where the `mida` id was free on 2026-11-08.
+
+Plan as written:
 
 `mida build [-c <configuration>] [-p:<name>=<value>] [--cache <dir>] [--cache gs://<bucket>[/<prefix>]] [--read-only]`, console summary, README install instructions and CI usage (the injected properties, `--no-build` on every later step, caching `~/.nuget/packages` in CI, `--read-only` on PR runners, credentials through ADC or Workload Identity Federation, and the bucket's age-based lifecycle rule from milestone 5), one run against a real bucket, a clear error when the loaded SDK is not the one `global.json` pins, `dotnet tool install` from a tag.
 

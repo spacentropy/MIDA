@@ -31,7 +31,7 @@ public sealed class OutputCacheTests : IDisposable
     }
 
     private Task<bool> Save(params string[] files) =>
-        new OutputCache(store, repo).SaveAsync(Key, files, [], [], Token);
+        new OutputCache(store, repo).SaveAsync(Key, files, [], [], TimeSpan.Zero, Token);
 
     private string Blob(string hash) => Path.Combine(temp, "cache", "v1", "cas", hash[..2], hash);
 
@@ -45,7 +45,7 @@ public sealed class OutputCacheTests : IDisposable
         }
 
         ManifestTarget[] targets = [new("Build", [new ManifestItem("{RepoRoot}/App/bin/app", new Dictionary<string, string> { ["A"] = "b" })])];
-        await new OutputCache(store, repo).SaveAsync(Key, [file], [new ManifestReference("App/bin/lib.dll", "Lib/bin/lib.dll")], targets, Token);
+        await new OutputCache(store, repo).SaveAsync(Key, [file], [new ManifestReference("App/bin/lib.dll", "Lib/bin/lib.dll")], targets, TimeSpan.Zero, Token);
 
         var other = Path.Combine(temp, "other");
         InRepo(other, "Lib/bin/lib.dll", "current");
@@ -134,10 +134,21 @@ public sealed class OutputCacheTests : IDisposable
     }
 
     [Test]
+    public async Task SecondWriterWithAnotherBuildTimeKeepsTheFirst()
+    {
+        var file = InRepo(repo, "bin/a", "a");
+        var cache = new OutputCache(store, repo);
+        await Assert.That(await cache.SaveAsync(Key, [file], [], [], TimeSpan.FromSeconds(1), Token)).IsTrue();
+        await Assert.That(await cache.SaveAsync(Key, [file], [], [], TimeSpan.FromSeconds(2), Token)).IsTrue();
+
+        await Assert.That((await cache.TryRestoreAsync(Key, Token))?.BuildTime).IsEqualTo(TimeSpan.FromSeconds(1));
+    }
+
+    [Test]
     public async Task TieredRestoreFetchesFromRemoteIntoLocal()
     {
         var remote = new FileSystemStore(Path.Combine(temp, "remote"));
-        await new OutputCache(remote, repo).SaveAsync(Key, [InRepo(repo, "bin/a", "a")], [], [], Token);
+        await new OutputCache(remote, repo).SaveAsync(Key, [InRepo(repo, "bin/a", "a")], [], [], TimeSpan.Zero, Token);
 
         var other = Path.Combine(temp, "other");
         await Assert.That(await new OutputCache(new TieredStore(store, remote), other).TryRestoreAsync(Key, Token)).IsNotNull();
@@ -152,11 +163,11 @@ public sealed class OutputCacheTests : IDisposable
     {
         var remote = new FileSystemStore(Path.Combine(temp, "remote"));
         var file = InRepo(repo, "bin/a", "first");
-        await new OutputCache(remote, repo).SaveAsync(Key, [file], [], [], Token);
+        await new OutputCache(remote, repo).SaveAsync(Key, [file], [], [], TimeSpan.Zero, Token);
 
         File.WriteAllText(file, "second");
         var tiered = new OutputCache(new TieredStore(store, remote), repo);
-        await Assert.That(await tiered.SaveAsync(Key, [file], [], [], Token)).IsFalse();
+        await Assert.That(await tiered.SaveAsync(Key, [file], [], [], TimeSpan.Zero, Token)).IsFalse();
 
         await tiered.TryRestoreAsync(Key, Token);
         await Assert.That(File.ReadAllText(file)).IsEqualTo("first");

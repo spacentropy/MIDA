@@ -58,6 +58,7 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
         IEnumerable<string> files,
         IReadOnlyList<ManifestReference> references,
         IReadOnlyList<ManifestTarget> targets,
+        TimeSpan buildTime,
         CancellationToken cancellationToken)
     {
         var stored = new ConcurrentBag<ManifestFile>();
@@ -73,10 +74,12 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
 
         // Blobs first: a reader that finds a manifest relies on them. Sorted, so a deterministic build writes identical bytes.
         var manifest = JsonSerializer.SerializeToUtf8Bytes(
-            new Manifest([.. stored.OrderBy(f => f.Path, StringComparer.Ordinal)], references, targets), ManifestJson.Default.Manifest);
+            new Manifest([.. stored.OrderBy(f => f.Path, StringComparer.Ordinal)], references, targets, buildTime), ManifestJson.Default.Manifest);
         return await store.TryCreateAsync(ManifestKey(key), manifest, cancellationToken)
             || await store.GetAsync(ManifestKey(key), cancellationToken) is not { } existing
-            || existing.AsSpan().SequenceEqual(manifest);
+            // Every writer times its build differently, so the time is left out of the comparison.
+            || JsonSerializer.Deserialize(existing, ManifestJson.Default.Manifest) is { } other
+                && JsonSerializer.SerializeToUtf8Bytes(other with { BuildTime = buildTime }, ManifestJson.Default.Manifest).AsSpan().SequenceEqual(manifest);
     }
 
     private static string BlobKey(string hash) => $"v1/cas/{hash[..2]}/{hash}";

@@ -7,7 +7,7 @@ public sealed class CacheEndToEndTests : IDisposable
 {
     private const string AllHits = "5 hits, 0 misses";
 
-    private readonly string temp = Directory.CreateTempSubdirectory("mida-tests-").FullName;
+    private readonly string temp = Temp();
 
     [ClassDataSource<GcsEmulator>(Shared = SharedType.PerTestSession)]
     public required GcsEmulator Emulator { get; init; }
@@ -22,7 +22,6 @@ public sealed class CacheEndToEndTests : IDisposable
     {
         var root = TestRepo.Checkout(Path.Combine(temp, relativePath));
         Write(root, "Repo.slnx", Solution("Tests"));
-        Write(root, "global.json", """{ "test": { "runner": "Microsoft.Testing.Platform" } }""");
         Write(root, "Directory.Packages.props", """
             <Project>
               <ItemGroup>
@@ -52,8 +51,9 @@ public sealed class CacheEndToEndTests : IDisposable
         return root;
     }
 
+    // No solution: the default finds the only one in the directory.
     private string Build(string root, params string[] arguments) =>
-        Dotnet(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", Path.Combine(temp, "cache"), .. arguments]);
+        Dotnet(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "--cache", Path.Combine(temp, "cache"), .. arguments]);
 
     private static (int ExitCode, string Output) RunTests(string root, params string[] arguments) =>
         Run(root, null, ["test", "--project", "Tests/Tests.csproj", "--no-build", .. arguments]);

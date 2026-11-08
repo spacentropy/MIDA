@@ -108,7 +108,8 @@ internal sealed record BuildOptions(
         };
         command.Validators.Add(result =>
         {
-            if (result.GetValue(SolutionArgument) is null)
+            // A validator's GetValue skips DefaultValueFactory, so the default is looked up again here.
+            if ((result.GetValue(SolutionArgument) ?? FindSolution()) is null)
             {
                 result.AddError("No solution given, and the current directory does not hold exactly one .sln or .slnx.");
             }

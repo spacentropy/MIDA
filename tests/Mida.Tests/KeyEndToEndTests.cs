@@ -6,7 +6,7 @@ namespace Mida.Tests;
 /// <summary>Real restores and builds of a small repo: App → LibA → LibB, and LibA uses Gen at build time.</summary>
 public sealed class KeyEndToEndTests : IDisposable
 {
-    private readonly string temp = Directory.CreateTempSubdirectory("mida-tests-").FullName;
+    private readonly string temp = Temp();
 
     public void Dispose() => Directory.Delete(temp, recursive: true);
 

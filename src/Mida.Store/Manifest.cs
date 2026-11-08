@@ -3,10 +3,12 @@ using System.Text.Json.Serialization;
 namespace Mida.Store;
 
 /// <summary>What a key produced. Every path is relative to the repo root, and blobs are per file.</summary>
+/// <param name="BuildTime">How long the build that stored it took, which a hit reports as saved.</param>
 public sealed record Manifest(
     IReadOnlyList<ManifestFile> Files,
     IReadOnlyList<ManifestReference> References,
-    IReadOnlyList<ManifestTarget> Targets);
+    IReadOnlyList<ManifestTarget> Targets,
+    TimeSpan BuildTime = default);
 
 /// <param name="Mode">Unix file mode, or null when written on Windows.</param>
 public sealed record ManifestFile(string Path, string Hash, int? Mode);

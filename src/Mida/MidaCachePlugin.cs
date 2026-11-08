@@ -27,7 +27,9 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
     private readonly TargetResults targetResults = new(repoRoot);
     private readonly ConcurrentQueue<Task> saves = new();
     private readonly ConcurrentQueue<Action<PluginLoggerBase>> saveLogs = new();
+    private readonly ConcurrentDictionary<string, long> missStarts = new(StringComparer.Ordinal);
     private long keyTicks;
+    private long savedTicks;
     private int failures;
     private int hits;
     private int misses;
@@ -35,6 +37,9 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
     public IReadOnlyDictionary<string, CacheKey> Keys => keys;
 
     public TimeSpan KeyTime => Stopwatch.GetElapsedTime(0, Volatile.Read(ref keyTicks));
+
+    /// <summary>The stored build times of the hits, summed over projects, so not wall-clock time.</summary>
+    public TimeSpan TimeSaved => TimeSpan.FromTicks(Volatile.Read(ref savedTicks));
 
     public int Failures => Volatile.Read(ref failures);
 
@@ -71,6 +76,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
                 var result = CacheResult.IndicateCacheHit(targetResults.Replay(manifest.Targets, entry.Key.ProjectInstance));
                 RemoveObsolete(entry, manifest);
                 Interlocked.Increment(ref hits);
+                Interlocked.Add(ref savedTicks, manifest.BuildTime.Ticks);
                 return result;
             }
         }
@@ -90,6 +96,8 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         }
 
         Interlocked.Increment(ref misses);
+        // A graph build asks once its dependencies are built, so this times the project's own build.
+        missStarts[buildRequest.ProjectFullPath] = Stopwatch.GetTimestamp();
         return CacheResult.IndicateNonCacheHit(CacheResultType.CacheMiss);
     }
 
@@ -106,6 +114,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
             return Task.CompletedTask;
         }
 
+        var buildTime = missStarts.TryGetValue(path, out var start) ? Stopwatch.GetElapsedTime(start) : TimeSpan.Zero;
         List<ManifestTarget> targets;
         try
         {
@@ -121,17 +130,18 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         // A dependent may already write to a shared directory, so the scan must happen before this hook returns.
         if (sharing.Contains(entry.Key))
         {
-            return SaveAsync(entry, key, targets, path, cancellationToken);
+            return SaveAsync(entry, key, targets, buildTime, path, cancellationToken);
         }
 
         // MSBuild waits for this hook holding its BuildManager lock, and the pool threads a save needs queue up
         // behind that lock, which stalled misses for up to a minute. See docs/notes/benchmarks.md
         // No token: MSBuild cancels it when the build ends, which is before the last saves do.
-        saves.Enqueue(Task.Run(() => SaveAsync(entry, key, targets, path, CancellationToken.None), CancellationToken.None));
+        saves.Enqueue(Task.Run(() => SaveAsync(entry, key, targets, buildTime, path, CancellationToken.None), CancellationToken.None));
         return Task.CompletedTask;
     }
 
-    private async Task SaveAsync(KeyValuePair<ProjectGraphNode, ProjectPredictions> entry, CacheKey key, List<ManifestTarget> targets, string path, CancellationToken cancellationToken)
+    private async Task SaveAsync(
+        KeyValuePair<ProjectGraphNode, ProjectPredictions> entry, CacheKey key, List<ManifestTarget> targets, TimeSpan buildTime, string path, CancellationToken cancellationToken)
     {
         try
         {
@@ -149,6 +159,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
                 // In a shared directory a dependency's file is its own source, and a restore would delete it before copying.
                 [.. copies.Where(c => c.Key != c.Value).Select(c => new ManifestReference(Name(c.Key), Name(c.Value))).OrderBy(r => r.Path, StringComparer.Ordinal)],
                 targets,
+                buildTime,
                 cancellationToken);
             if (!stored)
             {

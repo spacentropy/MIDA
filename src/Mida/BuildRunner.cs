@@ -173,6 +173,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
         var seconds = plugin.KeyTime.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture);
         Console.WriteLine($"{plugin.Keys.Count} keys in {seconds} s, {plugin.Failures} not computable");
-        Console.WriteLine($"{plugin.Hits} hits, {plugin.Misses} misses");
+        var saved = plugin.TimeSaved.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture);
+        Console.WriteLine($"{plugin.Hits} hits, {plugin.Misses} misses, {saved} s of project build time saved");
     }
 }

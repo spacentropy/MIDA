@@ -1,7 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
+        <PackAsTool>true</PackAsTool>
+        <ToolCommandName>mida</ToolCommandName>
+        <Description>Builds a .NET repo through MSBuild's static graph with a relocatable output cache on local disk and Google Cloud Storage.</Description>
+        <Authors>Gleb Lesnikov</Authors>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <RepositoryUrl>https://github.com/spacentropy/MIDA</RepositoryUrl>
     </PropertyGroup>
+    <ItemGroup>
+        <None Include="../../README.md" Pack="true" PackagePath="/" />
+    </ItemGroup>
     <ItemGroup>
         <InternalsVisibleTo Include="Mida.Tests" />
     </ItemGroup>
