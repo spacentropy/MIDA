@@ -9,7 +9,7 @@ Status: implemented, 2026-11-07. Answers [plan milestone 4](../plan.md#4-local-s
 <cache>/v1/ac/<key>                      manifest, JSON
 ```
 
-A manifest holds `files` (path, hash, Unix mode), `references` (path, source) and `targets` (replayed items). Paths are relative to the repo root. Item values use `{RepoRoot}/`. Blobs are written before the manifest, each to a temporary name and then renamed.
+A manifest holds `files` (path, hash, Unix mode), `references` (path, source) and `targets` (replayed items). Paths are relative to the repo root. Item values use `{RepoRoot}/`, and `{NuGetPackageRoot}/` since milestone 5. Blobs are written before the manifest, each to a temporary name and then renamed.
 
 Two more files are left out of the manifest beyond [relocation.md](relocation.md): `*.CoreCompileInputs.cache` and `*.GeneratedMSBuildEditorConfig.editorconfig`. They were the only ones that differ between checkouts of one commit. Without them, manifests are byte-identical across paths, so in milestone 5 a second writer's different manifest really means nondeterminism.
 
@@ -58,11 +58,11 @@ A hit on a two-project repo took about 0.6 s, restore included, against 0.8 s co
 
 ## Known limits
 
-- `File.Move(overwrite: false)` checks and then renames, so racing local writers can both report created. The object stays whole. GCS preconditions will be strict.
+- `File.Move(overwrite: false)` checks and then renames, so racing local writers can both report created. The object stays whole. GCS preconditions are strict.
 - A corrupt local blob stays, so its key misses with a warning until the cache is deleted. A store has no delete yet.
 - A manifest whose blob is gone keeps its key missing unless a rebuild produces the same blob, because manifests are create-only. Deterministic builds do.
 - Nothing evicts `~/.mida/cache`.
-- Unrelated projects sharing one `OutDir` are not supported. Each stores the other's files, so concurrent restores collide, which is a miss with a warning. Worse, the last copy wins, so one can restore the other's older bytes without warning. And a file rewritten between being hashed and stored puts the wrong bytes in a blob, which then misses as corrupt for good. A dependency and its dependent in one directory are safe, but the dependent misses once more on the run after its first, because the directory lists its own outputs as the dependency's. Obsolete files there are never deleted.
+- Unrelated projects sharing one `OutDir` are not supported. Each stores the other's files, so concurrent restores collide, which is a miss with a warning. Worse, the last copy wins, so one can restore the other's older bytes without warning. A file rewritten during a save no longer corrupts a blob: since milestone 5 the stored bytes are the hashed ones. A dependency and its dependent in one directory are safe, but the dependent misses once more on the run after its first, because the directory lists its own outputs as the dependency's. Obsolete files there are never deleted.
 - An `OutDir` outside `bin/` and `obj/` keeps obsolete files.
 - A checkout path containing `'` fails the build with `CS8101`: `ContinuousIntegrationBuild` turns the path into a `PathMap` that csc cannot parse.
 - A project with static web assets always misses, and so does anything that copies its manifests.
@@ -71,4 +71,4 @@ A hit on a two-project repo took about 0.6 s, restore included, against 0.8 s co
 
 - The 49-project repo: restore time, store overhead on a miss, and the plan's 3 s hit.
 - Whether `File.Copy` reflinks on Linux. No btrfs or XFS volume was tried, and the container's overlay filesystem cannot clone.
-- Windows, Release builds, different NuGet roots. Clearing the read-only attribute before a delete is Windows-only code that no run has exercised.
+- Windows. Release builds and a clone on another NuGet root have been tested since 4b and milestone 5. Clearing the read-only attribute before a delete is Windows-only code that no run has exercised.

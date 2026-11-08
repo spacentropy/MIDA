@@ -84,6 +84,6 @@ Traps: `Hash` is order-sensitive, so a hand-picked target list produced a wrong 
 - Release configuration. The real-repo runs were Debug.
 - Copy-on-write outside APFS. ext4 has no reflinks, so a plain copy may dominate there.
 - `/_/` source paths in a debugger, for someone debugging `mida build` outputs. Plain `dotnet build` is unaffected.
-- Different NuGet roots with packages used at runtime. The real repo shared one root, and the toy's package was referenced, not called.
+- Different NuGet roots with packages used at runtime. The real repo shared one root. Since milestone 5 a toy clone on another root hits and its tests pass, but its package is referenced, not called.
 - Integration tests of the real repo, which need external services.
 - The nine real-repo projects outside the solution.
