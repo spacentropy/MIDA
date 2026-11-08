@@ -15,7 +15,7 @@ A key is the SHA-256 of sorted text lines. `mida build --key-details <dir>` writ
 | `input` | Predicted inputs in the repo: relative path and content hash | Sources, project files, imported props and targets |
 | `missing` | Predicted inputs that do not exist | A file appearing must change the key |
 | `packages` | Hash of four sections of `project.assets.json` | What was resolved, without the absolute paths in the rest of the file |
-| `dependency-ref` | Hash of each transitive dependency's reference assembly | Early cutoff: a body edit stops at its project. A dependency with no reference assembly, such as `netstandard2.0` without `ProduceReferenceAssembly`, is hashed by its implementation, so it has no cutoff |
+| `dependency-ref` | Hash of each transitive dependency's reference assembly | Early cutoff: a body edit stops at its project. Only the metadata is hashed, without the GUID heap, which holds the MVID, and without the values of `AssemblyFileVersion` and `AssemblyInformationalVersion`, so a version stamped from git does not reach dependents unless it changes `AssemblyVersion` (`src/Mida/ReferenceAssemblyHash.cs`). A dependency with no reference assembly, such as `netstandard2.0` without `ProduceReferenceAssembly`, is hashed by its implementation, so it has no cutoff |
 | `dependency-files` | Hash of the file names in each transitive dependency's `bin/` | A new file there, such as a satellite assembly, reaches dependents' `bin/` with no API change |
 | `dependency-key` | The key of a dependency that runs at build time | See below |
 

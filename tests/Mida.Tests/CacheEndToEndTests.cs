@@ -156,6 +156,37 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsFailOn(root, "edited");
     }
 
+    // Stamps versions at build time from a file outside the key, the way MinVer does from git.
+    private const string StampVersion = """
+        <Target Name="StampVersion" BeforeTargets="GetAssemblyVersion">
+          <ReadLinesFromFile File="version.txt"><Output TaskParameter="Lines" PropertyName="Stamped" /></ReadLinesFromFile>
+          <PropertyGroup>
+            <FileVersion>$(Stamped)</FileVersion>
+            <InformationalVersion>$(Stamped)-alpha.1</InformationalVersion>
+            <AssemblyVersion>$([System.Version]::Parse($(Stamped)).Major).0.0.0</AssemblyVersion>
+          </PropertyGroup>
+        </Target>
+        </Project>
+        """;
+
+    [Test]
+    [Arguments("1.0.1", "4 hits, 1 misses")]
+    // A lower AssemblyVersion than a dependent was built against fails to load, so it must miss.
+    [Arguments("2.0.0", "1 hits, 4 misses")]
+    public async Task BodyEditUnderAStampedVersionMissesDependentsOnlyOnAnAssemblyVersionChange(string version, string expected)
+    {
+        var root = Checkout("a");
+        Edit(root, "LibB/LibB.csproj", "</Project>", StampVersion);
+        Write(root, "LibB/version.txt", "1.0.0");
+        Build(root);
+
+        Write(root, "LibB/version.txt", version);
+        Edit(root, "LibB/B.cs", """=> "b";""", """=> "edited";""");
+
+        await Assert.That(Build(root)).Contains(expected);
+        await AssertTestsFailOn(root, "edited");
+    }
+
     [Test]
     [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""", false)]
     [Arguments("LibB/data.txt", "data", "edited", false)]

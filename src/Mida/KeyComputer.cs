@@ -27,6 +27,7 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
     private static readonly string[] ExcludedRootProperties = ["NuGetPackageRoot", "BaseIntermediateOutputPath", "BaseOutputPath"];
 
     private readonly ConcurrentDictionary<string, string> fileHashes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> referenceHashes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string?> inputLines = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<ProjectGraphNode, HashSet<string>> buildTimeReferences = new();
     private readonly ConcurrentDictionary<ProjectGraphNode, HashSet<string>> outputNames = new();
@@ -166,7 +167,7 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
                 continue;
             }
 
-            lines.Add($"dependency-ref {name} {HashFile(ReferenceAssembly(dependency.ProjectInstance))}");
+            lines.Add($"dependency-ref {name} {ReferenceHash(dependency.ProjectInstance)}");
 
             // A file joining a dependency's bin/, such as a new satellite assembly, leaves its reference assembly alone.
             lines.Add($"dependency-files {name} {CacheKey.From(OutputNames(dependency)).Value}");
@@ -183,12 +184,28 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
             .OfType<string>(),
     ];
 
-    private static string ReferenceAssembly(ProjectInstance project)
+    private string ReferenceHash(ProjectInstance project)
     {
         // Projects with ProduceReferenceAssembly off have no ref: then the implementation is all there is.
         var path = project.GetPropertyValue("TargetRefPath");
-        return AbsolutePath(project, path.Length > 0 ? path : project.GetPropertyValue("TargetPath"))
-            ?? throw new InvalidOperationException($"No reference assembly path for {project.FullPath}");
+        if (path.Length == 0)
+        {
+            return HashFile(AbsolutePath(project, project.GetPropertyValue("TargetPath"))
+                ?? throw new InvalidOperationException($"No reference assembly path for {project.FullPath}"));
+        }
+
+        var full = AbsolutePath(project, path)!;
+        return referenceHashes.GetOrAdd(full, file =>
+        {
+            try
+            {
+                return ReferenceAssemblyHash.Compute(file);
+            }
+            catch (BadImageFormatException)
+            {
+                return HashFile(file);
+            }
+        });
     }
 
     private string? InputLine(string path)

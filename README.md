@@ -70,7 +70,7 @@ steps:
 - Multi-targeted projects are not cached. Their dependents are.
 - Web SDK projects with static web assets are not cached, since their manifests name the checkout.
 - Environment variables are not in the key.
-- Tools that stamp a version from git, such as MinVer, NBGV and GitVersion, cost hits after every commit.
+- Tools that stamp a version from git, such as MinVer, NBGV and GitVersion, cost the hits of every dependent whenever they change `AssemblyVersion`: MinVer on a major version, NBGV on a minor version and GitVersion on a patch by default. A hit can serve outputs stamped with an older version, which matters at pack and publish.
 
 ## Develop
 
