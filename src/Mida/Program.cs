@@ -11,7 +11,7 @@ internal static class Program
     {
         if (args is not ["build", .. var rest] || BuildOptions.Parse(rest) is not { } options)
         {
-            Console.Error.WriteLine("usage: mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache <dir>] [--print-keys] [--key-details <dir>]");
+            Console.Error.WriteLine("usage: mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache <dir>] [--cache gs://<bucket>[/<prefix>]] [--read-only] [--print-keys] [--key-details <dir>]");
             return UsageError;
         }
 

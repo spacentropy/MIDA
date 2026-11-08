@@ -15,6 +15,21 @@ public sealed class BuildOptionsTests
     }
 
     [Test]
+    [Arguments("gs://bucket", "")]
+    [Arguments("gs://bucket/", "")]
+    [Arguments("gs://bucket/team/mida/", "team/mida/")]
+    public async Task ParsesARemoteCacheBesideTheLocalOne(string remote, string prefix)
+    {
+        var options = BuildOptions.Parse(["repo.sln", "--cache", remote, "--cache", "store", "--read-only"]);
+
+        Assert.NotNull(options);
+        await Assert.That(options.Bucket).IsEqualTo("bucket");
+        await Assert.That(options.BucketPrefix).IsEqualTo(prefix);
+        await Assert.That(options.CacheDirectory).IsEqualTo(Path.GetFullPath("store"));
+        await Assert.That(options.ReadOnly).IsTrue();
+    }
+
+    [Test]
     public async Task ParsesProperties()
     {
         var options = BuildOptions.Parse(["repo.sln", "-c", "Release", "-p:DefineConstants=A;B", "-p:Empty=", "--configuration", "Debug"]);
@@ -38,4 +53,10 @@ public sealed class BuildOptionsTests
     [Arguments("one.sln", "two.sln")]
     public async Task RejectsBadArguments(string first, string second) =>
         await Assert.That(BuildOptions.Parse([first, second])).IsNull();
+
+    [Test]
+    [Arguments("gs://")]
+    [Arguments("gs:///prefix")]
+    public async Task RejectsABucketWithoutAName(string remote) =>
+        await Assert.That(BuildOptions.Parse(["repo.sln", "--cache", remote])).IsNull();
 }

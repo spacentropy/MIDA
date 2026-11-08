@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using Google.Apis.Auth.OAuth2;
 using Microsoft.Build.Evaluation;
 using Microsoft.Build.Execution;
 using Microsoft.Build.Framework;
@@ -19,6 +20,8 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         ["ContinuousIntegrationBuild"] = "true",
         ["IncludeSourceRevisionInInformationalVersion"] = "false",
     };
+
+    private static readonly HttpClient Http = new();
 
     // The user's -p wins over an injected one: global properties are in the key, so that costs hits, never correctness.
     private readonly Dictionary<string, string> globalProperties = InjectedProperties
@@ -47,7 +50,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         };
         var dotnetRoot = Path.GetFullPath(Path.Combine(sdkPath, "..", ".."));
         var keys = new KeyComputer(repoRoot, KeyComputer.ExcludedRoots(graph, dotnetRoot), environment);
-        var plugin = new MidaCachePlugin(keys, predictions, new OutputCache(new FileSystemStore(options.CacheDirectory), repoRoot), repoRoot);
+        var plugin = new MidaCachePlugin(keys, predictions, new OutputCache(Store(), repoRoot), repoRoot, options.ReadOnly);
 
         var parameters = new BuildParameters(collection)
         {
@@ -76,6 +79,29 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
         Report(plugin);
         return result.OverallResult == BuildResultCode.Success ? 0 : 1;
+    }
+
+    private IObjectStore Store()
+    {
+        var local = new FileSystemStore(options.CacheDirectory);
+        if (options.Bucket is not { } bucket)
+        {
+            return local;
+        }
+
+        // The variable Google's client libraries read for an emulator, which needs no credentials.
+        if (Environment.GetEnvironmentVariable("STORAGE_EMULATOR_HOST") is { Length: > 0 } emulator)
+        {
+            var endpoint = new Uri(emulator.Contains("://", StringComparison.Ordinal) ? emulator : "http://" + emulator);
+            return new TieredStore(local, new GcsStore(Http, endpoint, bucket, options.BucketPrefix, _ => Task.FromResult<string?>(null)));
+        }
+
+        // Application Default Credentials: GOOGLE_APPLICATION_CREDENTIALS, gcloud's, or the metadata server. Found on first use,
+        // so a run without them warns per project and builds.
+        var credential = new Lazy<Task<GoogleCredential>>(async () =>
+            (await GoogleCredential.GetApplicationDefaultAsync()).CreateScoped("https://www.googleapis.com/auth/devstorage.read_write"));
+        return new TieredStore(local, new GcsStore(Http, new Uri("https://storage.googleapis.com/"), bucket, options.BucketPrefix, async token =>
+            await ((ITokenAccess)await credential.Value).GetAccessTokenForRequestAsync(cancellationToken: token)));
     }
 
     /// <summary>

@@ -9,7 +9,8 @@ using Mida.Store;
 
 namespace Mida;
 
-internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredictions predictions, OutputCache cache, string repoRoot) : ProjectCachePluginBase
+internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredictions predictions, OutputCache cache, string repoRoot, bool readOnly)
+    : ProjectCachePluginBase
 {
     private static readonly Manifest NoOutputs = new([], [], []);
 
@@ -67,7 +68,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         {
             if (await cache.TryRestoreAsync(key.Value, cancellationToken) is { } manifest)
             {
-                var result = CacheResult.IndicateCacheHit(targetResults.Replay(manifest.Targets));
+                var result = CacheResult.IndicateCacheHit(targetResults.Replay(manifest.Targets, entry.Key.ProjectInstance));
                 RemoveObsolete(entry, manifest);
                 Interlocked.Increment(ref hits);
                 return result;
@@ -97,7 +98,8 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         ArgumentNullException.ThrowIfNull(buildResult);
         ArgumentNullException.ThrowIfNull(logger);
         var path = fileAccessContext.ProjectFullPath;
-        if (buildResult.OverallResult != BuildResultCode.Success
+        if (readOnly
+            || buildResult.OverallResult != BuildResultCode.Success
             || !nodes.TryGetValue(path, out var entry)
             || !keys.TryGetValue(Name(path), out var key))
         {
@@ -108,7 +110,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         try
         {
             // Now, not in the background: MSBuild merges later target results into this BuildResult.
-            targets = targetResults.Capture(buildResult, fileAccessContext.Targets);
+            targets = targetResults.Capture(buildResult, fileAccessContext.Targets, entry.Key.ProjectInstance);
         }
         catch (Exception e) when (IsCacheFailure(e, cancellationToken))
         {
@@ -141,13 +143,17 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
             }
 
             var copies = computer.DependencyCopies(entry.Key, outputs);
-            await cache.SaveAsync(
+            var stored = await cache.SaveAsync(
                 key.Value,
                 outputs.Where(f => !copies.ContainsKey(f)),
                 // In a shared directory a dependency's file is its own source, and a restore would delete it before copying.
                 [.. copies.Where(c => c.Key != c.Value).Select(c => new ManifestReference(Name(c.Key), Name(c.Value))).OrderBy(r => r.Path, StringComparer.Ordinal)],
                 targets,
                 cancellationToken);
+            if (!stored)
+            {
+                saveLogs.Enqueue(logger => logger.LogWarning($"Outputs of {path} not stored: another build stored different outputs for this key, so the build is not deterministic"));
+            }
         }
         catch (Exception e) when (IsCacheFailure(e, cancellationToken))
         {

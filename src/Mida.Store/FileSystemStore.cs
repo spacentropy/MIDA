@@ -5,13 +5,6 @@ public sealed class FileSystemStore(string root) : IObjectStore
     public Task<bool> TryCreateAsync(string key, ReadOnlyMemory<byte> content, CancellationToken cancellationToken) =>
         CreateAsync(key, temp => File.WriteAllBytesAsync(temp, content, cancellationToken));
 
-    public Task<bool> TryCreateFileAsync(string key, string sourceFile, CancellationToken cancellationToken) =>
-        CreateAsync(key, temp =>
-        {
-            File.Copy(sourceFile, temp);
-            return Task.CompletedTask;
-        });
-
     public async Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken)
     {
         var path = PathOf(key);

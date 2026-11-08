@@ -9,6 +9,9 @@ public sealed class CacheEndToEndTests : IDisposable
 
     private readonly string temp = Directory.CreateTempSubdirectory("mida-tests-").FullName;
 
+    [ClassDataSource<GcsEmulator>(Shared = SharedType.PerTestSession)]
+    public required GcsEmulator Emulator { get; init; }
+
     public void Dispose() => Directory.Delete(temp, recursive: true);
 
     // Outside git the implementation names the checkout, so netstandard2.0, which has no reference assembly by default, needs one.
@@ -91,6 +94,38 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(Build(clone)).Contains(second);
 
         await AssertTestsPass(clone);
+    }
+
+    [Test]
+    public async Task CloneOnAnotherMachineHitsThroughTheBucket()
+    {
+        var bucket = $"gs://{GcsEmulator.Bucket}/{Emulator.Prefix()}";
+        await Assert.That(Build(Checkout("a"), "--cache", bucket)).Contains("0 hits, 5 misses");
+        // Replayed target results with package paths would need a {NugetPackageRoot} token. This root exists here, so only this check sees one.
+        var root = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+        var manifests = Directory.GetFiles(Path.Combine(temp, "cache", "v1", "ac"));
+        await Assert.That(manifests).IsNotEmpty();
+        await Assert.That(manifests.Select(File.ReadAllText).Where(m => m.Contains(root, StringComparison.OrdinalIgnoreCase))).IsEmpty();
+
+        // Another machine: its own local tier and its own NuGet root.
+        var clone = Checkout("b");
+        var packages = Path.Combine(temp, "packages");
+        string[] mida = [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx"];
+        var output = Dotnet(clone, packages, [.. mida, "--cache", Path.Combine(temp, "other cache"), "--cache", bucket]);
+        await Assert.That(output).Contains(AllHits);
+
+        var (exitCode, testOutput) = Run(clone, packages, "test", "--project", "Tests/Tests.csproj", "--no-build");
+        await Assert.That(exitCode).IsEqualTo(0).Because(testOutput);
+    }
+
+    [Test]
+    public async Task ReadOnlyRunStoresNothing()
+    {
+        var root = Checkout("a");
+        await Assert.That(Build(root, "--read-only")).Contains("0 hits, 5 misses");
+
+        await Assert.That(Build(root, "--read-only")).Contains("0 hits, 5 misses");
     }
 
     [Test]

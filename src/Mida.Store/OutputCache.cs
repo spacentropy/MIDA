@@ -52,7 +52,8 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
         }
     }
 
-    public async Task SaveAsync(
+    /// <summary>False means another writer stored a different manifest for this key, which stays: the build is not deterministic.</summary>
+    public async Task<bool> SaveAsync(
         string key,
         IEnumerable<string> files,
         IReadOnlyList<ManifestReference> references,
@@ -62,14 +63,20 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
         var stored = new ConcurrentBag<ManifestFile>();
         await Parallel.ForEachAsync(files, cancellationToken, async (file, token) =>
         {
-            var hash = Hash(file);
-            await store.TryCreateFileAsync(BlobKey(hash), file, token);
+            // One read, so the stored bytes are the hashed ones even if the file changes meanwhile.
+            // shortcut: the whole file is in memory, and one over 2 GB fails. Stream through a hashing reader if outputs get that large.
+            var content = await File.ReadAllBytesAsync(file, token);
+            var hash = Convert.ToHexStringLower(SHA256.HashData(content));
+            await store.TryCreateAsync(BlobKey(hash), content, token);
             stored.Add(new ManifestFile(Relative(file), hash, OperatingSystem.IsWindows() ? null : (int)File.GetUnixFileMode(file)));
         });
 
         // Blobs first: a reader that finds a manifest relies on them. Sorted, so a deterministic build writes identical bytes.
-        var manifest = new Manifest([.. stored.OrderBy(f => f.Path, StringComparer.Ordinal)], references, targets);
-        await store.TryCreateAsync(ManifestKey(key), JsonSerializer.SerializeToUtf8Bytes(manifest, ManifestJson.Default.Manifest), cancellationToken);
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(
+            new Manifest([.. stored.OrderBy(f => f.Path, StringComparer.Ordinal)], references, targets), ManifestJson.Default.Manifest);
+        return await store.TryCreateAsync(ManifestKey(key), manifest, cancellationToken)
+            || await store.GetAsync(ManifestKey(key), cancellationToken) is not { } existing
+            || existing.AsSpan().SequenceEqual(manifest);
     }
 
     private static string BlobKey(string hash) => $"v1/cas/{hash[..2]}/{hash}";

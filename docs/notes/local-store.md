@@ -17,7 +17,7 @@ That needs a commit. In a `git init` with no commits there is no source root, so
 
 ## Decisions
 
-**`IObjectStore` takes paths, not streams.** `File.Copy` already clones: 2 GB took 0 ms on APFS. So copy-on-write needs no P/Invoke as long as the store sees paths. The interface has four methods, two for files and two for bytes. Swap, list and delete from [the note](build-cache-object-store.md) wait for refs and GC.
+**`IObjectStore` takes paths, not streams.** `File.Copy` already clones: 2 GB took 0 ms on APFS. So copy-on-write needs no P/Invoke as long as the store sees paths. The interface had four methods, two for files and two for bytes. Since milestone 5 it has three: a save passes bytes, so the stored bytes are the ones hashed (see the plan's milestone 5), and only a restore takes a path. Swap, list and delete from [the note](build-cache-object-store.md) wait for refs and GC.
 
 **A blob is verified once per run.** Hashing every copy would cost more than the clones, and the same DLL lands in many `bin/` folders. The first file restored from each blob is hashed, and a mismatch deletes that file and misses.
 

@@ -1,6 +1,6 @@
 # MIDA MVP plan
 
-Status: plan, 2026-11-01, updated 2026-11-08 after milestones 1 to 4, an adversarial review and 4b items 1 and 2. **Next: [milestone 4b](#4b-fixes-from-the-adversarial-review).** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md).
+Status: plan, 2026-11-01, updated 2026-11-08 after milestones 1 to 5, an adversarial review and 4b items 1 and 2. **Next: [milestone 6](#6-mvp-release), plus the decision in 4b item 3 and the real-repo run in 4b item 4.** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md).
 
 ## Goal
 
@@ -10,11 +10,11 @@ Everything else in the design (affected detection, tests, publish, metrics, cove
 
 ## Current state
 
-Milestones 1 to 4 are done, and so are items 1 and 2 of milestone 4b and the profiling step of item 4. Item 3 and the real-repo measurement of item 4 are open. `mida build [solution] [-c <configuration>] [-p:<name>=<value>]` restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project, restores a hit from the local store, and stores a miss. A clean clone at another path is all hits and `dotnet test --no-build` passes on it. See [local-store.md](notes/local-store.md).
+Milestones 1 to 5 are done, and so are items 1 and 2 of milestone 4b and the profiling step of item 4. Item 3 and the real-repo measurement of item 4 are open. `mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache gs://<bucket>[/<prefix>]] [--read-only]` restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project, restores a hit from the local store or through it from GCS, and stores a miss in both. A clean clone at another path is all hits and `dotnet test --no-build` passes on it. See [local-store.md](notes/local-store.md).
 
-Designed but not built: the GCS store, `--read-only`, the summary's time saved.
+Designed but not built: the summary's time saved.
 
-Diagnostics today: `--cache <dir>` to use a store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 91 on net10.0 and 92 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
+Diagnostics today: `--cache <dir>` to use a local store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 104 on net10.0 and 105 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. The GCS tests start fake-gcs-server in Docker and skip without it. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
 
 The cache has run on a five-project repo on macOS arm64 and Linux arm64. It has not run on the 49-project repo yet, so the 3 s hit is a sum of spike timings, not a measurement.
 
@@ -44,7 +44,7 @@ Out, named so nobody builds them by accident: caching multi-targeted projects th
 | Outputs | Predicted output directories scanned after the build, minus the exclusions in [relocation.md](notes/relocation.md). File contents are not rewritten and timestamps are left alone. Manifest paths stay relative to the repo root, and replayed target results carry `{RepoRoot}`. Files in `bin/` that came from a project dependency are stored as references and resolved to its current file on every hit, because the ref-based key does not cover them ([why](notes/project-cache-plugin.md#stale-dependency-copies)). Target results serialized as JSON through source generators and replayed on a hit | Borrowed from [MSBuildCache](https://github.com/microsoft/MSBuildCache) (MIT). Replayed results are the spec's "most correct" hit option. |
 | Injected properties | `mida build` always passes `ContinuousIntegrationBuild=true` and `IncludeSourceRevisionInInformationalVersion=false` as global properties on every run. Nothing is added to the repo | Portable PDB paths and byte-identical outputs; a commit SHA in the reference assembly would defeat early cutoff. See [relocation.md](notes/relocation.md). |
 | Restore | Not cached. `mida build` runs restore first, then the cached graph build | Same as MSBuildCache. `project.assets.json` carries absolute paths. |
-| Store | `IObjectStore` from [the note](notes/build-cache-object-store.md), cut to four methods that take paths so a filesystem store can clone: content-addressed blobs plus manifests, create-only writes, SHA-256 verified on read, once per blob per run. Local filesystem implementation first | No server. No BuildXL cache libraries: they pull RocksDB native binaries and are not trim-clean. |
+| Store | `IObjectStore` from [the note](notes/build-cache-object-store.md), cut to three methods, where a restore takes a path so a filesystem store can clone: content-addressed blobs plus manifests, create-only writes, SHA-256 verified on read, once per blob per run. Local filesystem implementation first | No server. No BuildXL cache libraries: they pull RocksDB native binaries and are not trim-clean. |
 | Failures | A key that cannot be computed, or any store failure, is a miss with a warning. It never fails the build | The cache must not become a new way to break CI. An exception that escapes a plugin hook does fail the build, so the plugin catches them. |
 | Not used | BuildXL as executor, BuildXL cache libraries, MSBuildCache's Detours-based add path | Executor constraint, dependency weight, Windows-only. |
 
@@ -134,6 +134,19 @@ Smaller, take them when nearby:
 
 ### 5. GCS store
 
+Done 2026-11-08, against [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) 1.56.1 in Docker, which enforces `ifGenerationMatch=0`. It has not met a real bucket, so Application Default Credentials are untested. Without Docker the GCS tests skip.
+
+- `GcsStore` in `Mida.Store` calls the JSON API over `HttpClient`, so the store stays AOT-clean. `Google.Apis.Auth` supplies only the access token, from `src/Mida`, because it pulls Newtonsoft.Json. `STORAGE_EMULATOR_HOST` points it at an emulator, with no credentials, as in Google's own client libraries.
+- `TieredStore` reads local first and copies what it fetches from remote into local, so a hit always restores from local disk. It writes remote first and local only when remote took the object. A manifest another writer won therefore comes back from remote and can be compared.
+- `--cache` is given once for each tier: `--cache <dir> --cache gs://<bucket>/<prefix>`. `--read-only` stores nothing in either tier. A read-only run that filled the local tier would hide from a later writing run on the same runner that the remote lacks those blobs.
+- An upload first asks whether the object exists. Most blobs already do, and a duplicate upload sends the whole body before its 412.
+- Each output file is read into memory once, then hashed and stored from those same bytes. That drops cloning on save, which only ever helped the local tier's disk use. A file over 2 GB would fail and be a miss.
+- `{NuGetPackageRoot}` was needed. `InitializeSourceRootMappedPaths` returns the package folder as a `SourceRoot` item, so 3 of the 5 test manifests named this machine's NuGet root. The clone test checks that no manifest does.
+- A second writer whose manifest differs gets a warning, and the first manifest stays.
+- No retries: a 5xx or a timeout is a miss with a warning. No compression: blobs stay byte-identical to outputs. Eviction: one age-based lifecycle rule over the whole prefix removes manifests along with blobs. A manifest whose blob went first then misses until it ages out too. Nothing sets this up yet; it belongs in the milestone 6 README.
+
+Plan as written:
+
 A remote store behind the local one, so every hit still restores by cloning from local disk. Create-only writes with `ifGenerationMatch=0`, 412 treated as success, SHA-256 verified on read, `--read-only`. Auth through Application Default Credentials. Replayed target results may hold package paths, so add a `{NugetPackageRoot}` token if they do.
 
 Hash each blob from the same read that uploads it: hashing and then copying separately lets a file change in between, so a blob can hold bytes that don't match its name. Bucket lifecycle eviction plus create-only manifests means a key whose blob was evicted stays a miss until a byte-identical rebuild, which a nondeterministic output never produces. So eviction must remove manifests along with blobs. Blobs are uncompressed for cloning, so decide on compression and egress cost for the remote tier.
@@ -148,6 +161,7 @@ Done when: a hit crosses two machines, or two clones with the local tier disable
 
 - Everything so far ran on macOS arm64 and Linux arm64, and Release only on the toy repo on macOS. Windows and Linux x64 are unproven, and the store has not met a repo of real size.
 - Nothing evicts `~/.mida/cache`, so it grows without limit.
+- The GCS store has only met an emulator. Real buckets, Application Default Credentials, Workload Identity Federation from CI, latency and egress cost are untested. A cold runner fetches each blob in its own request, with no retry.
 - The plugin API was experimental until recently and moved namespace between SDK 8 and 10, so a future SDK can break it. The fallback is driving `dotnet build` per project ourselves; keys and the store would not change.
 - Real source generators are untested: the build-time dependency rule was checked with a plain library.
 - Multi-targeted projects get no key, so they rebuild on every run. Their dependents do get keys. A `netstandard2.0` dependency without `ProduceReferenceAssembly` is keyed by its implementation, so it has no early cutoff.

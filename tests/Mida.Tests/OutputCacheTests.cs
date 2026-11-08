@@ -30,7 +30,7 @@ public sealed class OutputCacheTests : IDisposable
         return path;
     }
 
-    private Task Save(params string[] files) =>
+    private Task<bool> Save(params string[] files) =>
         new OutputCache(store, repo).SaveAsync(Key, files, [], [], Token);
 
     private string Blob(string hash) => Path.Combine(temp, "cache", "v1", "cas", hash[..2], hash);
@@ -117,6 +117,49 @@ public sealed class OutputCacheTests : IDisposable
 
         await Assert.That(await cache.TryRestoreAsync(Key, Token)).IsNotNull();
         await Assert.That(File.ReadAllText(file)).IsEqualTo("a");
+    }
+
+    [Test]
+    public async Task SecondWriterWithDifferentOutputsIsReportedAndLosesTheKey()
+    {
+        var file = InRepo(repo, "bin/a", "first");
+        await Assert.That(await Save(file)).IsTrue();
+        await Assert.That(await Save(file)).IsTrue();
+
+        File.WriteAllText(file, "second");
+        await Assert.That(await Save(file)).IsFalse();
+
+        await new OutputCache(store, repo).TryRestoreAsync(Key, Token);
+        await Assert.That(File.ReadAllText(file)).IsEqualTo("first");
+    }
+
+    [Test]
+    public async Task TieredRestoreFetchesFromRemoteIntoLocal()
+    {
+        var remote = new FileSystemStore(Path.Combine(temp, "remote"));
+        await new OutputCache(remote, repo).SaveAsync(Key, [InRepo(repo, "bin/a", "a")], [], [], Token);
+
+        var other = Path.Combine(temp, "other");
+        await Assert.That(await new OutputCache(new TieredStore(store, remote), other).TryRestoreAsync(Key, Token)).IsNotNull();
+
+        await Assert.That(File.ReadAllText(Path.Combine(other, "bin", "a"))).IsEqualTo("a");
+        Directory.Delete(Path.Combine(temp, "remote"), recursive: true);
+        await Assert.That(await new OutputCache(store, Path.Combine(temp, "third")).TryRestoreAsync(Key, Token)).IsNotNull();
+    }
+
+    [Test]
+    public async Task TieredWriterSeesTheManifestRemoteKept()
+    {
+        var remote = new FileSystemStore(Path.Combine(temp, "remote"));
+        var file = InRepo(repo, "bin/a", "first");
+        await new OutputCache(remote, repo).SaveAsync(Key, [file], [], [], Token);
+
+        File.WriteAllText(file, "second");
+        var tiered = new OutputCache(new TieredStore(store, remote), repo);
+        await Assert.That(await tiered.SaveAsync(Key, [file], [], [], Token)).IsFalse();
+
+        await tiered.TryRestoreAsync(Key, Token);
+        await Assert.That(File.ReadAllText(file)).IsEqualTo("first");
     }
 
     [Test]

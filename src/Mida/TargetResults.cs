@@ -7,44 +7,58 @@ using Mida.Store;
 
 namespace Mida;
 
-/// <summary>Replayed on a hit so no target runs. Items hold absolute paths, which <c>{RepoRoot}</c> makes relocatable.</summary>
+/// <summary>
+/// Replayed on a hit so no target runs. Items hold absolute paths, which <c>{RepoRoot}</c> makes relocatable, and
+/// <c>{NuGetPackageRoot}</c> for another machine's package folder: <c>InitializeSourceRootMappedPaths</c> returns it.
+/// </summary>
 internal sealed class TargetResults(string repoRoot)
 {
-    private const string Token = "{RepoRoot}/";
+    private readonly (string Path, string Token) repo = (repoRoot + Path.DirectorySeparatorChar, "{RepoRoot}/");
 
-    private readonly string prefix = repoRoot + Path.DirectorySeparatorChar;
+    public List<ManifestTarget> Capture(BuildResult result, IEnumerable<string> targets, ProjectInstance project)
+    {
+        var roots = Roots(project);
+        return [.. targets.Order(StringComparer.Ordinal).Select(target => new ManifestTarget(target, [.. result[target].Items.Select(i => Capture(i, roots))]))];
+    }
 
-    public List<ManifestTarget> Capture(BuildResult result, IEnumerable<string> targets) =>
-        [.. targets.Order(StringComparer.Ordinal).Select(target => new ManifestTarget(target, [.. result[target].Items.Select(Capture)]))];
+    public List<PluginTargetResult> Replay(IEnumerable<ManifestTarget> targets, ProjectInstance project)
+    {
+        var roots = Roots(project);
+        return [.. targets.Select(target => new PluginTargetResult(target.Name, [.. target.Items.Select(i => Replay(i, roots))], BuildResultCode.Success))];
+    }
 
-    public List<PluginTargetResult> Replay(IEnumerable<ManifestTarget> targets) =>
-        [.. targets.Select(target => new PluginTargetResult(target.Name, [.. target.Items.Select(Replay)], BuildResultCode.Success))];
-
-    private ManifestItem Capture(ITaskItem item)
+    private static ManifestItem Capture(ITaskItem item, (string Path, string Token)[] roots)
     {
         var metadata = item.CloneCustomMetadata();
         var values = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (string name in metadata.Keys)
         {
-            values[name] = Tokenize((string)metadata[name]!);
+            values[name] = Tokenize((string)metadata[name]!, roots);
         }
 
-        return new ManifestItem(Tokenize(item.ItemSpec), values);
+        return new ManifestItem(Tokenize(item.ItemSpec, roots), values);
     }
 
     // Read unescaped above, while TaskItem takes the escaped form.
-    private TaskItem Replay(ManifestItem stored)
+    private static TaskItem Replay(ManifestItem stored, (string Path, string Token)[] roots)
     {
-        var item = new TaskItem(Detokenize(stored.Spec));
+        var item = new TaskItem(Detokenize(stored.Spec, roots));
         foreach (var (name, value) in stored.Metadata)
         {
-            item.SetMetadata(name, Detokenize(value));
+            item.SetMetadata(name, Detokenize(value, roots));
         }
 
         return item;
     }
 
-    private string Tokenize(string value) => value.Replace(prefix, Token, KeyComputer.PathComparison);
+    private static string Tokenize(string value, (string Path, string Token)[] roots) =>
+        roots.Aggregate(value, (current, root) => current.Replace(root.Path, root.Token, KeyComputer.PathComparison));
 
-    private string Detokenize(string value) => ProjectCollection.Escape(value.Replace(Token, prefix, StringComparison.Ordinal));
+    private static string Detokenize(string value, (string Path, string Token)[] roots) =>
+        ProjectCollection.Escape(roots.Aggregate(value, (current, root) => current.Replace(root.Token, root.Path, StringComparison.Ordinal)));
+
+    private (string Path, string Token)[] Roots(ProjectInstance project) =>
+        project.GetPropertyValue("NuGetPackageRoot") is { Length: > 0 } packages
+            ? [repo, (KeyComputer.WithSeparator(packages), "{NuGetPackageRoot}/")]
+            : [repo];
 }
