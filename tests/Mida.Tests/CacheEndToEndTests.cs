@@ -119,6 +119,22 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(exitCode).IsEqualTo(0).Because(testOutput);
     }
 
+    // A task in mida's process binds to mida's copies of assemblies the SDK also ships, such as System.CodeDom, and fails.
+    [Test]
+    public async Task NoTargetRunsInMidasProcess()
+    {
+        var root = Checkout("a");
+        Write(root, "Directory.Build.targets", """
+            <Project>
+              <Target Name="NotInMida" BeforeTargets="CollectPackageReferences;CoreCompile">
+                <Error Condition="$([System.Environment]::CommandLine.Contains('Mida.dll'))" Text="Ran in mida's process" />
+              </Target>
+            </Project>
+            """);
+
+        await Assert.That(Build(root)).Contains("0 hits, 5 misses");
+    }
+
     [Test]
     public async Task ReadOnlyRunStoresNothing()
     {
