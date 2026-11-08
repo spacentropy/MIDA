@@ -56,7 +56,7 @@ src/Mida/          CLI, MSBuild hosting (Locator), project-cache plugin, key com
 src/Mida.Store/    IObjectStore, manifest model, restore and save, local filesystem store, GCS store. No MSBuild dependency, AOT-clean
 tests/Mida.Tests/  TUnit on Microsoft.Testing.Platform (set in global.json)
 MIDA.slnx          All three projects
-.github/workflows/ release.yml: pack and push to nuget.org on a v* tag
+.github/workflows/ ci.yml: tests on Linux and macOS, net10.0 and net11.0. release.yml: pack and push to nuget.org on a v* tag
 ```
 
 Conventions already in place: `Directory.Build.props` (warnings as errors, all analyzers, `IsAotCompatible`, `net10.0;net11.0`, `runtime-async` on `net11.0` only), SDK pinned in `global.json`. Tests use TUnit only, including test projects that fixtures generate; the test project is the one place `IsAotCompatible` is off, because it never ships. Only `src/Mida` may reference packages that are not trim-clean (Locator, Prediction, Google.Apis.Auth). A new package that claims to be trim-clean is checked with a throwaway NativeAOT publish, as System.CommandLine was. Keep MSBuild types out of `Mida.Store`. MSBuild packages compile against 18.9.6, the oldest supported API, with `ExcludeAssets="runtime" PrivateAssets="all"` so the SDK's copies load at run time; Prediction brings `Microsoft.NET.StringTools` in, so that one needs the same treatment. Code that touches Microsoft.Build types must sit in a method that runs after `MSBuildLocator.RegisterDefaults()`, otherwise the JIT binds the types before the SDK path is registered.
