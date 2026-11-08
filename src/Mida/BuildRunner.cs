@@ -20,6 +20,12 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         ["IncludeSourceRevisionInInformationalVersion"] = "false",
     };
 
+    // The user's -p wins over an injected one: global properties are in the key, so that costs hits, never correctness.
+    private readonly Dictionary<string, string> globalProperties = InjectedProperties
+        .Where(p => !options.Properties.ContainsKey(p.Key))
+        .Concat(options.Properties)
+        .ToDictionary(StringComparer.OrdinalIgnoreCase);
+
     public int Run()
     {
         if (!Restore())
@@ -27,8 +33,8 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             return 1;
         }
 
-        using var collection = new ProjectCollection(InjectedProperties);
-        var graph = new ProjectGraph(new ProjectGraphEntryPoint(options.Solution, InjectedProperties), collection);
+        using var collection = new ProjectCollection(globalProperties);
+        var graph = new ProjectGraph(new ProjectGraphEntryPoint(options.Solution, globalProperties), collection);
         var predictions = new ProjectGraphPredictionExecutor(ProjectPredictors.AllProjectGraphPredictors, ProjectPredictors.AllProjectPredictors)
             .PredictInputsAndOutputs(graph);
 
@@ -46,7 +52,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         var parameters = new BuildParameters(collection)
         {
             ProjectCacheDescriptor = ProjectCacheDescriptor.FromInstance(plugin, new Dictionary<string, string>()),
-            GlobalProperties = InjectedProperties,
+            GlobalProperties = globalProperties,
             Loggers = Loggers(),
             MaxNodeCount = Environment.ProcessorCount,
             EnableNodeReuse = false,
@@ -73,7 +79,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         // Evaluated apart from the build: restore rewrites the imports the build must then see.
         using var collection = new ProjectCollection();
         // The same properties as the build: a repo may condition its restore on ContinuousIntegrationBuild.
-        var properties = new Dictionary<string, string?>(InjectedProperties!)
+        var properties = new Dictionary<string, string?>(globalProperties!)
         {
             ["MSBuildRestoreSessionId"] = Guid.NewGuid().ToString("D"),
             ["ExcludeRestorePackageImports"] = "true",

@@ -12,9 +12,9 @@ public sealed class KeyEndToEndTests : IDisposable
 
     private string Checkout(string relativePath) => TestRepo.Checkout(Path.Combine(temp, relativePath));
 
-    private Dictionary<string, string> Keys(string root, string? packages = null)
+    private Dictionary<string, string> Keys(string root, string? packages = null, params string[] arguments)
     {
-        var output = Dotnet(root, packages, Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--print-keys", "--cache", Path.Combine(temp, "cache"));
+        var output = Dotnet(root, packages, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--print-keys", "--cache", Path.Combine(temp, "cache"), .. arguments]);
         if (!output.Contains(" 0 not computable", StringComparison.Ordinal))
         {
             Assert.Fail(output);
@@ -38,6 +38,19 @@ public sealed class KeyEndToEndTests : IDisposable
 
         await Assert.That(first.Count).IsEqualTo(4);
         await Assert.That(second).IsEquivalentTo(first);
+    }
+
+    [Test]
+    [Arguments("-c", "Release")]
+    [Arguments("-p:Foo=bar", null)]
+    public async Task GlobalPropertyChangesEveryKey(string option, string? value)
+    {
+        var root = Checkout("repo");
+        var before = Keys(root);
+
+        var after = Keys(root, null, value is null ? [option] : [option, value]);
+
+        await Assert.That(Changed(before, after)).IsEquivalentTo(["App", "LibA", "LibB", "Gen"]);
     }
 
     [Test]

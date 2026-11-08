@@ -11,7 +11,11 @@ public sealed class CacheEndToEndTests : IDisposable
 
     public void Dispose() => Directory.Delete(temp, recursive: true);
 
-    private string Checkout(string relativePath)
+    // Outside git the implementation names the checkout, so netstandard2.0, which has no reference assembly by default, needs one.
+    private const string MultiTarget =
+        "<TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks><ProduceReferenceAssembly>true</ProduceReferenceAssembly><LangVersion>latest</LangVersion>";
+
+    private string Checkout(string relativePath, bool multiTarget = false)
     {
         var root = TestRepo.Checkout(Path.Combine(temp, relativePath));
         Write(root, "Repo.slnx", Solution("Tests"));
@@ -27,7 +31,7 @@ public sealed class CacheEndToEndTests : IDisposable
         Write(root, "LibB/LibB.csproj", Project("""
             <PackageReference Include="Newtonsoft.Json" />
             <None Update="data.txt" CopyToOutputDirectory="PreserveNewest" />
-            """));
+            """).Replace("<TargetFramework>net10.0</TargetFramework>", multiTarget ? MultiTarget : "<TargetFramework>net10.0</TargetFramework>", StringComparison.Ordinal));
         Write(root, "LibB/data.txt", "data");
         Write(root, "Tests/Tests.csproj", Project(
             Reference("LibA") + """<PackageReference Include="TUnit" />""",
@@ -45,10 +49,11 @@ public sealed class CacheEndToEndTests : IDisposable
         return root;
     }
 
-    private string Build(string root) =>
-        Dotnet(root, null, Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", Path.Combine(temp, "cache"));
+    private string Build(string root, params string[] arguments) =>
+        Dotnet(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", Path.Combine(temp, "cache"), .. arguments]);
 
-    private static (int ExitCode, string Output) RunTests(string root) => Run(root, null, "test", "--project", "Tests/Tests.csproj", "--no-build");
+    private static (int ExitCode, string Output) RunTests(string root, params string[] arguments) =>
+        Run(root, null, ["test", "--project", "Tests/Tests.csproj", "--no-build", .. arguments]);
 
     private static void Edit(string root, string file, string find, string replace)
     {
@@ -76,22 +81,38 @@ public sealed class CacheEndToEndTests : IDisposable
     }
 
     [Test]
-    public async Task CleanCloneAtAnotherPathIsAllHitsAndItsTestsPass()
+    [Arguments(false, "0 hits, 5 misses", AllHits)]
+    [Arguments(true, "0 hits, 4 misses", "4 hits, 0 misses")]
+    public async Task CleanCloneAtAnotherPathIsAllHitsAndItsTestsPass(bool multiTarget, string first, string second)
     {
-        await Assert.That(Build(Checkout("a"))).Contains("0 hits, 5 misses");
+        await Assert.That(Build(Checkout("a", multiTarget))).Contains(first);
 
-        var clone = Checkout("some deeper/path (b)");
-        await Assert.That(Build(clone)).Contains(AllHits);
+        var clone = Checkout("some deeper/path (b)", multiTarget);
+        await Assert.That(Build(clone)).Contains(second);
 
         await AssertTestsPass(clone);
     }
 
     [Test]
-    [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""", "4 hits, 1 misses")]
-    [Arguments("LibB/data.txt", "data", "edited", "1 hits, 4 misses")]
-    public async Task EditReachesTestsWhenTheLibraryMisses(string file, string find, string replace, string expected)
+    public async Task ReleaseCloneIsAllHitsAndItsTestsPass()
     {
-        var root = Checkout("a");
+        await Assert.That(Build(Checkout("a"), "-c", "Release")).Contains("0 hits, 5 misses");
+
+        var clone = Checkout("b");
+        await Assert.That(Build(clone, "-c", "Release")).Contains(AllHits);
+
+        var (exitCode, output) = RunTests(clone, "-c", "Release");
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+    }
+
+    [Test]
+    [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""", "4 hits, 1 misses", false)]
+    [Arguments("LibB/data.txt", "data", "edited", "1 hits, 4 misses", false)]
+    [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""", "4 hits, 0 misses", true)]
+    [Arguments("LibB/data.txt", "data", "edited", "1 hits, 3 misses", true)]
+    public async Task EditReachesTestsWhenTheLibraryMisses(string file, string find, string replace, string expected, bool multiTarget)
+    {
+        var root = Checkout("a", multiTarget);
         Build(root);
 
         Edit(root, file, find, replace);
@@ -101,19 +122,22 @@ public sealed class CacheEndToEndTests : IDisposable
     }
 
     [Test]
-    [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""")]
-    [Arguments("LibB/data.txt", "data", "edited")]
-    public async Task EditReachesTestsWhenTheLibraryHitsFromANewerEntryThanItsDependents(string file, string find, string replace)
+    [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""", false)]
+    [Arguments("LibB/data.txt", "data", "edited", false)]
+    [Arguments("LibB/B.cs", """=> "b";""", """=> "edited";""", true)]
+    [Arguments("LibB/data.txt", "data", "edited", true)]
+    public async Task EditReachesTestsWhenTheLibraryHitsFromANewerEntryThanItsDependents(string file, string find, string replace, bool multiTarget)
     {
-        var writer = Checkout("a");
+        var writer = Checkout("a", multiTarget);
         Build(writer);
         Edit(writer, file, find, replace);
         Build(writer);
 
-        var clone = Checkout("b");
+        var clone = Checkout("b", multiTarget);
         Edit(clone, file, find, replace);
 
-        await Assert.That(Build(clone)).Contains(AllHits);
+        // A multi-targeted library is never stored, so it rebuilds and its dependents hit.
+        await Assert.That(Build(clone)).Contains(multiTarget ? "4 hits, 0 misses" : AllHits);
         await AssertTestsFailOn(clone, "edited");
     }
 

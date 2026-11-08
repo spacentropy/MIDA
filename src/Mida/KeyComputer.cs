@@ -159,6 +159,13 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
                 continue;
             }
 
+            if (dependency.ProjectInstance.GetPropertyValue("IsCrossTargetingBuild") == "true")
+            {
+                // An outer build has no assembly, its inner builds do. All of them, which saves resolving the framework this project picks.
+                AddDependencies(dependency, lines, dependencyKeys, seen);
+                continue;
+            }
+
             lines.Add($"dependency-ref {name} {HashFile(ReferenceAssembly(dependency.ProjectInstance))}");
 
             // A file joining a dependency's bin/, such as a new satellite assembly, leaves its reference assembly alone.
