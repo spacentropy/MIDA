@@ -13,6 +13,7 @@
         <PackageReference Include="Google.Apis.Auth" Version="1.78.0" />
         <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
         <PackageReference Include="Microsoft.Build.Prediction" Version="1.2.44" />
+        <PackageReference Include="System.CommandLine" Version="2.0.14" />
         <!-- MSBuild comes from the installed SDK at run time. 18.9 is the oldest supported API; SDK 11 exposes the same one. -->
         <PackageReference Include="Microsoft.Build" Version="18.9.6" ExcludeAssets="runtime" PrivateAssets="all" />
         <PackageReference Include="Microsoft.Build.Framework" Version="18.9.6" ExcludeAssets="runtime" PrivateAssets="all" />

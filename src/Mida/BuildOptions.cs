@@ -1,3 +1,5 @@
+using System.CommandLine;
+
 namespace Mida;
 
 internal sealed record BuildOptions(
@@ -12,61 +14,109 @@ internal sealed record BuildOptions(
 {
     private const string GcsScheme = "gs://";
 
+    private static readonly Argument<string?> SolutionArgument = new("solution")
+    {
+        Description = "The .sln or .slnx to build. Defaults to the only one in the current directory.",
+        Arity = ArgumentArity.ZeroOrOne,
+        DefaultValueFactory = _ => FindSolution(),
+    };
+
+    private static readonly Option<string?> ConfigurationOption = new("--configuration", "-c")
+    {
+        Description = "The build configuration.",
+    };
+
+    // One property per -p, unlike dotnet build: splitting on ';' would break values such as DefineConstants.
+    private static readonly Option<string[]> PropertyOption = new("--property", "-p")
+    {
+        Description = "A global property, <name>=<value>. One per -p.",
+    };
+
+    private static readonly Option<string[]> CacheOption = new("--cache")
+    {
+        Description = "A local store directory, ~/.mida/cache by default, or gs://<bucket>[/<prefix>] for a GCS store behind it.",
+    };
+
+    private static readonly Option<bool> ReadOnlyOption = new("--read-only") { Description = "Store nothing in either store." };
+
+    private static readonly Option<bool> PrintKeysOption = new("--print-keys") { Description = "Print each project's cache key." };
+
+    private static readonly Option<string?> KeyDetailsOption = new("--key-details")
+    {
+        Description = "Write the lines of each key to this directory.",
+    };
+
+    public static Command Command { get; } = CreateCommand();
+
     private static string DefaultCacheDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".mida", "cache");
 
-    public static BuildOptions? Parse(IReadOnlyList<string> args)
-    {
-        string? solution = null;
-        string? details = null;
-        string? cache = null;
-        string? remote = null;
-        var printKeys = false;
-        var readOnly = false;
-        var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    /// <summary>The arguments after <c>build</c>. Null if they do not parse.</summary>
+    public static BuildOptions? Parse(IReadOnlyList<string> args) =>
+        Command.Parse(args) is { Errors.Count: 0 } result ? From(result) : null;
 
-        for (var i = 0; i < args.Count; i++)
+    public static BuildOptions From(ParseResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in result.GetValue(PropertyOption) ?? [])
         {
-            switch (args[i])
-            {
-                case "--print-keys":
-                    printKeys = true;
-                    break;
-                case "--key-details" when i + 1 < args.Count:
-                    details = Path.GetFullPath(args[++i]);
-                    break;
-                case "--read-only":
-                    readOnly = true;
-                    break;
-                case "--cache" when i + 1 < args.Count && args[i + 1].StartsWith(GcsScheme, StringComparison.Ordinal):
-                    remote = args[++i][GcsScheme.Length..];
-                    break;
-                case "--cache" when i + 1 < args.Count:
-                    cache = Path.GetFullPath(args[++i]);
-                    break;
-                case "-c" or "--configuration" when i + 1 < args.Count:
-                    properties["Configuration"] = args[++i];
-                    break;
-                // One property per -p, unlike dotnet build: splitting on ';' would break values such as DefineConstants.
-                case ['-', 'p', ':', .. var property] when property.IndexOf('=', StringComparison.Ordinal) is > 0 and var equals:
-                    properties[property[..equals]] = property[(equals + 1)..];
-                    break;
-                case var path when solution is null && path is not ['-', ..]:
-                    solution = path;
-                    break;
-                default:
-                    return null;
-            }
+            var equals = property.IndexOf('=', StringComparison.Ordinal);
+            properties[property[..equals]] = property[(equals + 1)..];
         }
 
-        solution ??= FindSolution();
-        var parts = remote?.Split('/', 2);
-        var bucket = parts?[0];
+        if (result.GetValue(ConfigurationOption) is { } configuration)
+        {
+            properties["Configuration"] = configuration;
+        }
+
+        var caches = result.GetValue(CacheOption) ?? [];
+        var local = caches.LastOrDefault(c => !IsRemote(c));
+        var parts = caches.LastOrDefault(IsRemote)?[GcsScheme.Length..].Split('/', 2);
         var prefix = parts is [_, var folder] && folder.Trim('/') is { Length: > 0 } trimmed ? trimmed + "/" : string.Empty;
-        return solution is null || bucket is ""
-            ? null
-            : new BuildOptions(Path.GetFullPath(solution), printKeys, details, cache ?? DefaultCacheDirectory, properties, bucket, prefix, readOnly);
+        return new BuildOptions(
+            Path.GetFullPath(result.GetValue(SolutionArgument)!),
+            result.GetValue(PrintKeysOption),
+            result.GetValue(KeyDetailsOption) is { } details ? Path.GetFullPath(details) : null,
+            local is null ? DefaultCacheDirectory : Path.GetFullPath(local),
+            properties,
+            parts?[0],
+            prefix,
+            result.GetValue(ReadOnlyOption));
     }
+
+    private static Command CreateCommand()
+    {
+        PropertyOption.Validators.Add(result =>
+        {
+            foreach (var token in result.Tokens.Where(t => t.Value.IndexOf('=', StringComparison.Ordinal) <= 0))
+            {
+                result.AddError($"-p takes <name>=<value>, not '{token.Value}'.");
+            }
+        });
+        CacheOption.Validators.Add(result =>
+        {
+            foreach (var token in result.Tokens.Where(t => IsRemote(t.Value) && t.Value[GcsScheme.Length..].Split('/')[0].Length == 0))
+            {
+                result.AddError($"--cache '{token.Value}' names no bucket.");
+            }
+        });
+
+        var command = new Command("build", "Restore and build a solution through the cache.")
+        {
+            SolutionArgument, ConfigurationOption, PropertyOption, CacheOption, ReadOnlyOption, PrintKeysOption, KeyDetailsOption,
+        };
+        command.Validators.Add(result =>
+        {
+            if (result.GetValue(SolutionArgument) is null)
+            {
+                result.AddError("No solution given, and the current directory does not hold exactly one .sln or .slnx.");
+            }
+        });
+        return command;
+    }
+
+    private static bool IsRemote(string cache) => cache.StartsWith(GcsScheme, StringComparison.Ordinal);
 
     private static string? FindSolution()
     {

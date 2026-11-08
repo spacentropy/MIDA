@@ -1,3 +1,4 @@
+using System.CommandLine;
 using System.Runtime.CompilerServices;
 using Microsoft.Build.Locator;
 
@@ -5,16 +6,15 @@ namespace Mida;
 
 internal static class Program
 {
-    private const int UsageError = 2;
-
     private static int Main(string[] args)
     {
-        if (args is not ["build", .. var rest] || BuildOptions.Parse(rest) is not { } options)
-        {
-            Console.Error.WriteLine("usage: mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache <dir>] [--cache gs://<bucket>[/<prefix>]] [--read-only] [--print-keys] [--key-details <dir>]");
-            return UsageError;
-        }
+        BuildOptions.Command.SetAction(result => Run(BuildOptions.From(result)));
+        var root = new RootCommand("Builds a .NET repo through MSBuild's static graph with a relocatable output cache.") { BuildOptions.Command };
+        return root.Parse(args).Invoke();
+    }
 
+    private static int Run(BuildOptions options)
+    {
         var sdk = MSBuildLocator.RegisterDefaults();
         // The folder name keeps the prerelease label that sdk.Version, a System.Version, drops.
         return Build(options, Path.GetFileName(Path.TrimEndingDirectorySeparator(sdk.MSBuildPath)), sdk.MSBuildPath);

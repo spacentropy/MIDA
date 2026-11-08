@@ -32,7 +32,7 @@ public sealed class BuildOptionsTests
     [Test]
     public async Task ParsesProperties()
     {
-        var options = BuildOptions.Parse(["repo.sln", "-c", "Release", "-p:DefineConstants=A;B", "-p:Empty=", "--configuration", "Debug"]);
+        var options = BuildOptions.Parse(["repo.sln", "-p:Configuration=Release", "-p:DefineConstants=A;B", "-p:Empty=", "--configuration", "Debug", "-p", "Spaced=yes"]);
 
         Assert.NotNull(options);
         await Assert.That(options.Properties).IsEquivalentTo(new Dictionary<string, string>
@@ -40,6 +40,7 @@ public sealed class BuildOptionsTests
             ["Configuration"] = "Debug",
             ["DefineConstants"] = "A;B",
             ["Empty"] = string.Empty,
+            ["Spaced"] = "yes",
         });
     }
 
@@ -59,4 +60,8 @@ public sealed class BuildOptionsTests
     [Arguments("gs:///prefix")]
     public async Task RejectsABucketWithoutAName(string remote) =>
         await Assert.That(BuildOptions.Parse(["repo.sln", "--cache", remote])).IsNull();
+
+    [Test]
+    public async Task RejectsTwoConfigurations() =>
+        await Assert.That(BuildOptions.Parse(["repo.sln", "-c", "Release", "-c", "Debug"])).IsNull();
 }
