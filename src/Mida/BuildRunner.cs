@@ -59,6 +59,8 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             Loggers = Loggers(),
             MaxNodeCount = Environment.ProcessorCount,
             EnableNodeReuse = false,
+            // Tasks in this process bind to mida's own copies, such as System.CodeDom 7.0 from Google.Apis.Auth, and fail.
+            DisableInProcNode = true,
         };
 
         var manager = BuildManager.DefaultBuildManager;
@@ -135,7 +137,10 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             ["ExcludeRestorePackageImports"] = "true",
         };
         var request = new BuildRequestData(options.Solution, properties, null, ["Restore"], null, BuildRequestDataFlags.ClearCachesAfterBuild);
-        var parameters = new BuildParameters(collection) { Loggers = Loggers(), MaxNodeCount = Environment.ProcessorCount, EnableNodeReuse = false };
+        var parameters = new BuildParameters(collection)
+        {
+            Loggers = Loggers(), MaxNodeCount = Environment.ProcessorCount, EnableNodeReuse = false, DisableInProcNode = true,
+        };
         return BuildManager.DefaultBuildManager.Build(parameters, request).OverallResult == BuildResultCode.Success;
     }
 
