@@ -8,6 +8,7 @@
         <NoWarn>$(NoWarn);CA1515;CA1849</NoWarn>
     </PropertyGroup>
     <ItemGroup>
+        <PackageReference Include="Testcontainers.FakeGcsServer" Version="4.16.0" />
         <PackageReference Include="TUnit" Version="1.81.5" />
     </ItemGroup>
     <ItemGroup>
