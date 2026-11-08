@@ -2,6 +2,14 @@
 
 Status: design notes, 2026-10-29. Context: [the landscape report](../research_notes/reports/NET%20monorepo%20tooling%20landscape.md) ranks a relocatable, storage-agnostic remote cache as opportunity #1.
 
+The MVP ([plan milestones 4 and 5](../plan.md#4-local-store-end-to-end)) keeps the `cas/` and `ac/` model, create-only writes and first-writer-wins, and differs here:
+
+- Blobs are uncompressed, so the local tier can clone them. Manifest paths are relative to the repo root, not the project.
+- `IObjectStore` has three methods: create-only write, get, and get into a file. Refs, compare-and-swap, delete, list and the `pr/` namespace wait for features that need them.
+- A local disk tier sits in front of the bucket, which answers the open question below. Nothing evicts it.
+- No retries: a 5xx or a timeout is a miss.
+- Eviction is one age-based lifecycle rule over the whole prefix, not a longer TTL on `cas/`. That breaks the invariant below in one case: a manifest that reuses an older blob can outlive it, and its key misses until the manifest ages out too.
+
 ## Decision
 
 The remote build cache lives in **plain object storage**. There is no cache server to run. The tool talks to the bucket directly through a small storage abstraction with one implementation per provider.

@@ -15,7 +15,7 @@ A key is the SHA-256 of sorted text lines. `mida build --key-details <dir>` writ
 | `input` | Predicted inputs in the repo: relative path and content hash | Sources, project files, imported props and targets |
 | `missing` | Predicted inputs that do not exist | A file appearing must change the key |
 | `packages` | Hash of four sections of `project.assets.json` | What was resolved, without the absolute paths in the rest of the file |
-| `dependency-ref` | Hash of each transitive dependency's reference assembly | Early cutoff: a body edit stops at its project |
+| `dependency-ref` | Hash of each transitive dependency's reference assembly | Early cutoff: a body edit stops at its project. A dependency with no reference assembly, such as `netstandard2.0` without `ProduceReferenceAssembly`, is hashed by its implementation, so it has no cutoff |
 | `dependency-files` | Hash of the file names in each transitive dependency's `bin/` | A new file there, such as a satellite assembly, reaches dependents' `bin/` with no API change |
 | `dependency-key` | The key of a dependency that runs at build time | See below |
 
@@ -30,7 +30,7 @@ The key must be computed during the build. Reference assemblies do not exist in 
 - **Build-time dependencies.** A `ProjectReference` with `OutputItemType` set, or `ReferenceOutputAssembly=false`, is typically a source generator. It runs during compilation, so a body edit can change the dependent's output with no API change. Those edges use the dependency's full key.
 - **Packages from restore's result.** A floating version can resolve higher with no repo file changing, so hashing `Directory.Packages.props` is not enough. Only `version`, `targets`, `libraries` and `projectFileDependencyGroups` are read.
 
-Missing keys are safe: if a key cannot be computed, a warning is logged and the project builds normally. A multi-targeted project has several graph nodes, gets no key, and builds normally.
+Missing keys are safe: if a key cannot be computed, a warning is logged and the project builds normally. A multi-targeted project has several graph nodes, gets no key, and builds normally. Its dependents do get keys since plan 4b item 1: a dependency that is an outer node adds the lines of every inner node.
 
 ## Results
 
@@ -66,7 +66,7 @@ Prediction itself took 39 ms for 49 projects.
 
 ## Not tested
 
-- Linux and Windows, including case sensitivity and `\` in property values.
+- Windows. Keys have been computed on Linux arm64 since milestone 4, but case sensitivity and `\` in property values were not tried there.
 - Environment variables. They are not in the key, so one that changes build output produces a false hit. The extra-inputs setting in the plan's risks would cover this.
 - Projects outside the 49: the spike repo has no real source generators, and the build-time rule was tested with a plain library.
 - Prediction accuracy. Nothing here finds undeclared inputs, which is the plan's first known risk.

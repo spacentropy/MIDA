@@ -9,7 +9,7 @@ Status: implemented, 2026-11-07. Answers [plan milestone 4](../plan.md#4-local-s
 <cache>/v1/ac/<key>                      manifest, JSON
 ```
 
-A manifest holds `files` (path, hash, Unix mode), `references` (path, source) and `targets` (replayed items). Paths are relative to the repo root. Item values use `{RepoRoot}/`, and `{NuGetPackageRoot}/` since milestone 5. Blobs are written before the manifest, each to a temporary name and then renamed.
+A manifest holds `files` (path, hash, Unix mode), `references` (path, source), `targets` (replayed items) and, since milestone 6, `buildTime`, which a hit reports as saved. Paths are relative to the repo root. Item values use `{RepoRoot}/`, and `{NuGetPackageRoot}/` since milestone 5. Blobs are written before the manifest, each to a temporary name and then renamed.
 
 Two more files are left out of the manifest beyond [relocation.md](relocation.md): `*.CoreCompileInputs.cache` and `*.GeneratedMSBuildEditorConfig.editorconfig`. They were the only ones that differ between checkouts of one commit. Without them, manifests are byte-identical across paths, so in milestone 5 a second writer's different manifest really means nondeterminism.
 
@@ -19,7 +19,7 @@ That needs a commit. In a `git init` with no commits there is no source root, so
 
 **`IObjectStore` takes paths, not streams.** `File.Copy` already clones: 2 GB took 0 ms on APFS. So copy-on-write needs no P/Invoke as long as the store sees paths. The interface had four methods, two for files and two for bytes. Since milestone 5 it has three: a save passes bytes, so the stored bytes are the ones hashed (see the plan's milestone 5), and only a restore takes a path. Swap, list and delete from [the note](build-cache-object-store.md) wait for refs and GC.
 
-**A blob is verified once per run.** Hashing every copy would cost more than the clones, and the same DLL lands in many `bin/` folders. The first file restored from each blob is hashed, and a mismatch deletes that file and misses.
+**A blob is verified once per run.** Hashing every copy would cost more than the clones, and the same DLL lands in many `bin/` folders. The first file restored from each blob is hashed, and a mismatch deletes that file and misses. Only a pass is remembered, so after a failure the next copy is checked again (plan 4b).
 
 **No existence check before restoring.** A failure partway leaves some restored files behind. That is safe because the miss clears them first.
 
@@ -33,7 +33,7 @@ Both deletes stay inside the project's `bin/` and `obj/` (`BaseOutputPath`, `Bas
 
 **Failures are a miss with a warning**, which covers a missing or corrupt blob, a bad manifest and any I/O error. An exception that escapes a hook fails the build, so `Parallel.ForEach`, which wraps failures in `AggregateException`, must not be used here. `Parallel.ForEachAsync` rethrows the original.
 
-**Manifest paths are checked against the repo root**, and store keys against the store root, because the store is not trusted. This covers both a written path and a blob hash used as a path.
+**Manifest paths are checked against the repo root**, and store keys against the store root. This covers both a written path and a blob hash used as a path. The bucket is trusted ([design §1.6](../design.md#16-constraints-we-hold-to)), so this guards against bugs and corruption. It does not keep an entry inside its own project: a manifest can still write any file in the checkout (plan 4b, smaller items).
 
 **A manifest is validated before the first file moves.** JSON options reject null or missing properties, and `Validate` covers what they cannot see: entries inside collections, hash shape, mode range, empty or repeated target names, and every path. What only MSBuild can judge, such as an empty item spec or a reserved metadata name, throws `ArgumentException`, which is also a miss. A result holding one target twice hangs MSBuild instead of failing, and an unhandled hook exception fails the build with no message at all. A well-formed manifest that lists the wrong targets or hashes is out of scope, since nothing signs a manifest.
 

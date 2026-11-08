@@ -50,7 +50,7 @@ Observed behaviour:
 
 - Each project gets one `GetCacheResultAsync`. Referenced projects are asked for `Build` plus `GetTargetFrameworks`, `GetNativeManifest`, `GetCopyToOutputDirectoryItems` and `GetTargetFrameworksWithPlatformForSingleTargetFramework`, while entry projects get `Build` alone. Results must be stored for all requested targets, and with them no target runs on a hit.
 - `HandleProjectFinishedAsync` is not called for hits. Its `FileAccessContext.Targets` lists the targets, and `BuildResult.ResultsByTarget` holds 2 to 6 entries.
-- Replayed items contain absolute paths, so **`{RepoRoot}` belongs in the stored target results**, even though output files need no rewriting. The spike only replaced the repo root. A different NuGet root is untested.
+- Replayed items contain absolute paths, so **`{RepoRoot}` belongs in the stored target results**, even though output files need no rewriting. The spike only replaced the repo root. Milestone 5 added `{NuGetPackageRoot}`, and a clone on another NuGet root hits.
 - `ITaskItem.CloneCustomMetadata()` must be read through its keys, because its entry type is not `DictionaryEntry`.
 - An exception in a hook fails the build, surfacing from `EndBuild`. The real plugin must catch store failures and treat them as a miss.
 - Target-result JSON ties an entry to a target list. Keep requested targets in the key.
@@ -61,7 +61,7 @@ SDK 10 and 11 only, the supported versions. Projects may target older frameworks
 
 - The plugin API in `Microsoft.Build.ProjectCache` is identical in MSBuild 18.9 (SDK 10) and 18.12 (SDK 11), so one source tree serves both. SDK 8 had only `Microsoft.Build.Experimental.ProjectCache`.
 - A host cannot load MSBuild from an SDK newer than its runtime. Both builds of the tool are needed: the `net11.0` build loaded SDK 10 and 11, the `net10.0` build loaded SDK 10.
-- **A `net10.0` host in a repo pinned to SDK 11 silently picks SDK 10** and fails with `NETSDK1045`, because the Locator filters out SDKs it cannot load and ignores `global.json`. The tool should compare the loaded SDK with the pinned one and report that plainly.
+- **A `net10.0` host in a repo pinned to SDK 11 silently picks SDK 10** and fails with `NETSDK1045`, because the Locator filters out SDKs it cannot load and ignores `global.json`. Since milestone 6, `mida build` compares the loaded SDK with the one `dotnet --version` resolves in the solution's directory, and stops with an error when they differ.
 - `Directory.Build.props` now multi-targets, with `runtime-async` on `net11.0` only.
 
 ## Not tested
@@ -69,6 +69,5 @@ SDK 10 and 11 only, the supported versions. Projects may target older frameworks
 [Milestone 4](local-store.md) covered hits decided by real keys, a hit resolving references to another hit, dependency content files, and Linux.
 
 - Overlaying on a dependent's `deps.json`, which was unchanged here. A dependency's package change alters the dependent's restore output, so it should change the key.
-- Windows and Release builds.
-- How `dotnet tool install` picks between target frameworks.
-- Different NuGet roots with replayed items.
+- Windows. Release builds since 4b, on the toy repo only.
+- A machine with only runtime 10. With runtimes 10 and 11 installed, the tool installed through `dotnet tool install` ran its `net11.0` build, since it built a repo pinned to SDK 11.

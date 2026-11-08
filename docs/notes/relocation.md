@@ -35,7 +35,7 @@ ContinuousIntegrationBuild=true
 IncludeSourceRevisionInInformationalVersion=false
 ```
 
-Nothing is added to the repo, so plain `dotnet build`, Rider and local debugging keep their defaults. They are injected on laptops too because global properties are in the key: a read-only laptop run must compute CI's keys to get its hits.
+Nothing is added to the repo, so plain `dotnet build`, Rider and local debugging keep their defaults. They are injected on every run, so every run computes the same keys for the same inputs: global properties are in the key.
 
 At the same commit, 1,624 of 1,624 DLLs and PDBs were byte-identical between injected properties and the same properties in `Directory.Build.props`. Neither property needs to be set by hand. `Deterministic` is on by default and `ContinuousIntegrationBuild` produces `PathMap`.
 
@@ -81,7 +81,7 @@ Traps: `Hash` is order-sensitive, so a hand-picked target list produced a wrong 
 
 - Hits through the plugin. This spike copied files and ran `dotnet test` by hand. [Milestone 2](project-cache-plugin.md) covered that, including a project that misses while its dependencies hit.
 - Windows. Linux is covered by a small repo in [milestone 4](local-store.md).
-- Release configuration. The real-repo runs were Debug.
+- Release configuration on the real repo, whose runs were Debug. The toy repo has hit in Release since plan 4b.
 - Copy-on-write outside APFS. ext4 has no reflinks, so a plain copy may dominate there.
 - `/_/` source paths in a debugger, for someone debugging `mida build` outputs. Plain `dotnet build` is unaffected.
 - Different NuGet roots with packages used at runtime. The real repo shared one root. Since milestone 5 a toy clone on another root hits and its tests pass, but its package is referenced, not called.

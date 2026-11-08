@@ -56,6 +56,7 @@ src/Mida/          CLI, MSBuild hosting (Locator), project-cache plugin, key com
 src/Mida.Store/    IObjectStore, manifest model, restore and save, local filesystem store, GCS store. No MSBuild dependency, AOT-clean
 tests/Mida.Tests/  TUnit on Microsoft.Testing.Platform (set in global.json)
 MIDA.slnx          All three projects
+.github/workflows/ release.yml: pack and push to nuget.org on a v* tag
 ```
 
 Conventions already in place: `Directory.Build.props` (warnings as errors, all analyzers, `IsAotCompatible`, `net10.0;net11.0`, `runtime-async` on `net11.0` only), SDK pinned in `global.json`. Tests use TUnit only, including test projects that fixtures generate; the test project is the one place `IsAotCompatible` is off, because it never ships. Only `src/Mida` may reference packages that are not trim-clean (Locator, Prediction, Google.Apis.Auth). A new package that claims to be trim-clean is checked with a throwaway NativeAOT publish, as System.CommandLine was. Keep MSBuild types out of `Mida.Store`. MSBuild packages compile against 18.9.6, the oldest supported API, with `ExcludeAssets="runtime" PrivateAssets="all"` so the SDK's copies load at run time; Prediction brings `Microsoft.NET.StringTools` in, so that one needs the same treatment. Code that touches Microsoft.Build types must sit in a method that runs after `MSBuildLocator.RegisterDefaults()`, otherwise the JIT binds the types before the SDK path is registered.
@@ -144,7 +145,7 @@ Done 2026-11-08, against [fake-gcs-server](https://github.com/fsouza/fake-gcs-se
 - Each output file is read into memory once, then hashed and stored from those same bytes. That drops cloning on save, which only ever helped the local tier's disk use. A download from GCS is also held whole in memory before it lands in the local tier. Either way, a file over 2 GB would fail and be a miss.
 - `{NuGetPackageRoot}` was needed. `InitializeSourceRootMappedPaths` returns the package folder as a `SourceRoot` item, so 3 of the 5 test manifests named this machine's NuGet root. The clone test checks that no manifest does.
 - A second writer whose manifest differs gets a warning, and the first manifest stays.
-- No retries: a 5xx or a timeout is a miss with a warning. No compression: blobs stay byte-identical to outputs. Eviction: one age-based lifecycle rule over the whole prefix removes manifests along with blobs. A manifest whose blob went first then misses until it ages out too. Nothing sets this up yet; it belongs in the milestone 6 README.
+- No retries: a 5xx or a timeout is a miss with a warning. No compression: blobs stay byte-identical to outputs. Eviction: one age-based lifecycle rule over the whole prefix removes manifests along with blobs. A manifest whose blob went first then misses until it ages out too. Nothing in mida sets this up; the README gives the rule.
 
 Plan as written:
 
