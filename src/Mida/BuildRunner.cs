@@ -61,17 +61,41 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         var manager = BuildManager.DefaultBuildManager;
         manager.BeginBuild(parameters);
         GraphBuildResult result;
+        // Deleted after the nodes exit: it is their working directory, and evaluation fails once it is gone.
+        var nodesDirectory = Directory.CreateTempSubdirectory("mida-nodes-");
         try
         {
+            StartNodes(manager, parameters.MaxNodeCount, nodesDirectory.FullName);
             result = manager.BuildRequest(new GraphBuildRequestData(graph, ["Build"]));
         }
         finally
         {
             manager.EndBuild();
+            nodesDirectory.Delete(recursive: true);
         }
 
         Report(plugin);
         return result.OverallResult == BuildResultCode.Success ? 0 : 1;
+    }
+
+    /// <summary>
+    /// MSBuild starts worker nodes holding a lock, and on Unix their pipe handshake needs a pool thread. Started during
+    /// a burst of hits, every pool thread waits on that lock, so the first misses after many hits stalled for up to a
+    /// minute. Started here, before any hit, the nodes stay up for the graph build. See docs/notes/benchmarks.md
+    /// </summary>
+    private static void StartNodes(BuildManager manager, int count, string directory)
+    {
+        var project = Path.Combine(directory, "nodes.proj");
+        // Distinct global properties make distinct requests, which the scheduler spreads over new nodes.
+        var requests = string.Concat(Enumerable.Range(0, count).Select(i => $"""<Node Include="{project}" AdditionalProperties="Node={i}" />"""));
+        File.WriteAllText(project, $"""
+            <Project>
+              <ItemGroup>{requests}</ItemGroup>
+              <Target Name="Start"><MSBuild Projects="@(Node)" Targets="Started" BuildInParallel="true" /></Target>
+              <Target Name="Started" />
+            </Project>
+            """);
+        manager.BuildRequest(new BuildRequestData(project, new Dictionary<string, string?>(), null, ["Start"], null));
     }
 
     private bool Restore()

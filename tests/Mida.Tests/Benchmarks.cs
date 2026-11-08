@@ -28,7 +28,8 @@ public sealed class Benchmarks : IDisposable
 
     private async Task Build(int count)
     {
-        // shortcut: multi-targeting off until plan 4b item 1 lands, then pass multiTargetEvery: 5.
+        // shortcut: multi-targeting off, since net10.0;net11.0 needs SDK 11, which only the net11.0 host loads, and the
+        // numbers are on SDK 10. Pass multiTargetEvery: 5 when the benchmark moves to -f net11.0.
         GeneratedRepo Generate(string name) => GeneratedRepo.Generate(Path.Combine(temp, name), count);
         var cache = Path.Combine(temp, "cache");
         string Mida(GeneratedRepo repo) => Dotnet(repo.Root, null, Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", cache);

@@ -24,6 +24,8 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
     private readonly HashSet<ProjectGraphNode> sharing = SharingDirectories(predictions);
     private readonly ConcurrentDictionary<string, CacheKey> keys = new(StringComparer.Ordinal);
     private readonly TargetResults targetResults = new(repoRoot);
+    private readonly ConcurrentQueue<Task> saves = new();
+    private readonly ConcurrentQueue<Action<PluginLoggerBase>> saveLogs = new();
     private long keyTicks;
     private int failures;
     private int hits;
@@ -41,7 +43,15 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
 
     public override Task BeginBuildAsync(CacheContext context, PluginLoggerBase logger, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public override Task EndBuildAsync(PluginLoggerBase logger, CancellationToken cancellationToken) => Task.CompletedTask;
+    public override async Task EndBuildAsync(PluginLoggerBase logger, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        await Task.WhenAll(saves);
+        foreach (var log in saveLogs)
+        {
+            log(logger);
+        }
+    }
 
     public override async Task<CacheResult> GetCacheResultAsync(BuildRequestData buildRequest, PluginLoggerBase logger, CancellationToken cancellationToken)
     {
@@ -82,7 +92,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         return CacheResult.IndicateNonCacheHit(CacheResultType.CacheMiss);
     }
 
-    public override async Task HandleProjectFinishedAsync(FileAccessContext fileAccessContext, BuildResult buildResult, PluginLoggerBase logger, CancellationToken cancellationToken)
+    public override Task HandleProjectFinishedAsync(FileAccessContext fileAccessContext, BuildResult buildResult, PluginLoggerBase logger, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(buildResult);
         ArgumentNullException.ThrowIfNull(logger);
@@ -91,15 +101,42 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
             || !nodes.TryGetValue(path, out var entry)
             || !keys.TryGetValue(Name(path), out var key))
         {
-            return;
+            return Task.CompletedTask;
         }
 
+        List<ManifestTarget> targets;
+        try
+        {
+            // Now, not in the background: MSBuild merges later target results into this BuildResult.
+            targets = targetResults.Capture(buildResult, fileAccessContext.Targets);
+        }
+        catch (Exception e) when (IsCacheFailure(e))
+        {
+            logger.LogWarning($"Outputs of {path} not stored: {e.Message}");
+            return Task.CompletedTask;
+        }
+
+        // A dependent may already write to a shared directory, so the scan must happen before this hook returns.
+        if (sharing.Contains(entry.Key))
+        {
+            return SaveAsync(entry, key, targets, path, cancellationToken);
+        }
+
+        // MSBuild waits for this hook holding its BuildManager lock, and the pool threads a save needs queue up
+        // behind that lock, which stalled misses for up to a minute. See docs/notes/benchmarks.md
+        // No token: MSBuild cancels it when the build ends, which is before the last saves do.
+        saves.Enqueue(Task.Run(() => SaveAsync(entry, key, targets, path, CancellationToken.None), CancellationToken.None));
+        return Task.CompletedTask;
+    }
+
+    private async Task SaveAsync(KeyValuePair<ProjectGraphNode, ProjectPredictions> entry, CacheKey key, List<ManifestTarget> targets, string path, CancellationToken cancellationToken)
+    {
         try
         {
             var outputs = ProjectOutputs.Scan(entry.Key.ProjectInstance, entry.Value);
             if (ProjectOutputs.HoldCheckoutPaths(outputs, repoRoot))
             {
-                logger.LogMessage($"Outputs of {path} not stored: static web assets name this checkout", MessageImportance.High);
+                saveLogs.Enqueue(logger => logger.LogMessage($"Outputs of {path} not stored: static web assets name this checkout", MessageImportance.High));
                 return;
             }
 
@@ -109,12 +146,12 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
                 outputs.Where(f => !copies.ContainsKey(f)),
                 // In a shared directory a dependency's file is its own source, and a restore would delete it before copying.
                 [.. copies.Where(c => c.Key != c.Value).Select(c => new ManifestReference(Name(c.Key), Name(c.Value))).OrderBy(r => r.Path, StringComparer.Ordinal)],
-                targetResults.Capture(buildResult, fileAccessContext.Targets),
+                targets,
                 cancellationToken);
         }
         catch (Exception e) when (IsCacheFailure(e))
         {
-            logger.LogWarning($"Outputs of {path} not stored: {e.Message}");
+            saveLogs.Enqueue(logger => logger.LogWarning($"Outputs of {path} not stored: {e.Message}"));
         }
     }
 
