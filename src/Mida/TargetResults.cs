@@ -12,9 +12,6 @@ internal sealed class TargetResults(string repoRoot)
 {
     private const string Token = "{RepoRoot}/";
 
-    private static readonly StringComparison PathComparison =
-        OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-
     private readonly string prefix = repoRoot + Path.DirectorySeparatorChar;
 
     public List<ManifestTarget> Capture(BuildResult result, IEnumerable<string> targets) =>
@@ -47,7 +44,7 @@ internal sealed class TargetResults(string repoRoot)
         return item;
     }
 
-    private string Tokenize(string value) => value.Replace(prefix, Token, PathComparison);
+    private string Tokenize(string value) => value.Replace(prefix, Token, KeyComputer.PathComparison);
 
     private string Detokenize(string value) => ProjectCollection.Escape(value.Replace(Token, prefix, StringComparison.Ordinal));
 }

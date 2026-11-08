@@ -145,16 +145,17 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
         var buildTime = buildTimeReferences.GetOrAdd(node, BuildTimeReferences);
         foreach (var dependency in node.ProjectReferences)
         {
-            if (!seen.Add(dependency))
-            {
-                continue;
-            }
-
             var name = Relative(dependency.ProjectInstance.FullPath);
             if (buildTime.Contains(dependency.ProjectInstance.FullPath))
             {
                 // Its behaviour shapes this project's output, so its API alone says too little. Its key covers its own dependencies.
+                // Before the seen check: a normal reference reached earlier must not hide this edge.
                 lines.Add($"dependency-key {name} {dependencyKeys[name].Value}");
+                continue;
+            }
+
+            if (!seen.Add(dependency))
+            {
                 continue;
             }
 
@@ -198,7 +199,8 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
     public static string? AbsolutePath(ProjectInstance project, string path) =>
         path.Length == 0 ? null : Path.GetFullPath(path.Replace('\\', Path.DirectorySeparatorChar), project.Directory);
 
-    private string Relative(string path) => Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+    /// <summary>The name a project or file has in keys, manifests and <c>--print-keys</c>.</summary>
+    public string Relative(string path) => Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
 
     private string HashFile(string path) => fileHashes.GetOrAdd(path, OutputCache.Hash);
 }

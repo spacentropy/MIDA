@@ -21,6 +21,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         .Where(g => g.Count() == 1)
         .ToDictionary(g => g.Key, g => g.Single(), StringComparer.Ordinal);
 
+    private readonly HashSet<ProjectGraphNode> sharing = SharingDirectories(predictions);
     private readonly ConcurrentDictionary<string, CacheKey> keys = new(StringComparer.Ordinal);
     private readonly TargetResults targetResults = new(repoRoot);
     private long keyTicks;
@@ -122,18 +123,26 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
         e is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException
             or KeyNotFoundException or ArgumentException or System.Text.Json.JsonException;
 
-    private string Name(string path) => Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+    private string Name(string path) => computer.Relative(path);
 
     // A scan sees everything under a project's directories, so another project's outputs there are not obsolete.
+    private static HashSet<ProjectGraphNode> SharingDirectories(ProjectGraphPredictions predictions)
+    {
+        var directories = predictions.PredictionsPerNode
+            .Select(p => (Node: p.Key, Directories: ProjectOutputs.Directories(p.Key.ProjectInstance, p.Value).ToList()))
+            .ToList();
+        return
+        [
+            .. directories.Where(own => directories.Any(other => other.Node != own.Node
+                && other.Directories.Any(o => own.Directories.Any(d => o.StartsWith(d, KeyComputer.PathComparison)))))
+                .Select(own => own.Node),
+        ];
+    }
+
     private void RemoveObsolete(KeyValuePair<ProjectGraphNode, ProjectPredictions> entry, Manifest manifest)
     {
         var (node, own) = entry;
-        var directories = ProjectOutputs.Directories(node.ProjectInstance, own).ToList();
-        var shared = predictions.PredictionsPerNode
-            .Where(other => other.Key != node)
-            .SelectMany(other => ProjectOutputs.Directories(other.Key.ProjectInstance, other.Value))
-            .Any(other => directories.Any(d => other.StartsWith(d, KeyComputer.PathComparison)));
-        if (!shared)
+        if (!sharing.Contains(node))
         {
             // Only bin/ and obj/ belong to the build: an OutDir elsewhere can hold the repo's own files.
             var project = node.ProjectInstance;

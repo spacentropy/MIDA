@@ -72,7 +72,8 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
     {
         // Evaluated apart from the build: restore rewrites the imports the build must then see.
         using var collection = new ProjectCollection();
-        var properties = new Dictionary<string, string?>
+        // The same properties as the build: a repo may condition its restore on ContinuousIntegrationBuild.
+        var properties = new Dictionary<string, string?>(InjectedProperties!)
         {
             ["MSBuildRestoreSessionId"] = Guid.NewGuid().ToString("D"),
             ["ExcludeRestorePackageImports"] = "true",
@@ -105,10 +106,12 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
         if (options.KeyDetailsDirectory is { } directory)
         {
-            Directory.CreateDirectory(directory);
             foreach (var (project, key) in plugin.Keys)
             {
-                File.WriteAllLines(Path.Combine(directory, project.Replace('/', '_') + ".key"), key.Lines);
+                // Mirrors the repo layout: flattening the path would let two projects share one file.
+                var file = Path.Combine(directory, project + ".key");
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                File.WriteAllLines(file, key.Lines);
             }
         }
 

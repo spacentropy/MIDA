@@ -16,7 +16,8 @@ internal static class Program
         }
 
         var sdk = MSBuildLocator.RegisterDefaults();
-        return Build(options, sdk.Version.ToString(), sdk.MSBuildPath);
+        // The folder name keeps the prerelease label that sdk.Version, a System.Version, drops.
+        return Build(options, Path.GetFileName(Path.TrimEndingDirectorySeparator(sdk.MSBuildPath)), sdk.MSBuildPath);
     }
 
     // Not inlined: the JIT would bind Microsoft.Build types before the Locator registers the SDK.

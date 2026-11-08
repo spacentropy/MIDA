@@ -61,6 +61,30 @@ public sealed class KeyEndToEndTests : IDisposable
     }
 
     [Test]
+    public async Task BuildTimeDependencyReachedNormallyFirstStillPassesOnItsBehaviour()
+    {
+        var root = Checkout("repo");
+        // LibA lists LibB before Gen, so the walk meets Gen through LibB's normal reference first.
+        Write(root, "LibB/LibB.csproj", Project("""<PackageReference Include="Newtonsoft.Json" />""" + Reference("Gen")));
+        var before = Keys(root);
+
+        var path = Path.Combine(root, "Gen/G.cs");
+        File.WriteAllText(path, File.ReadAllText(path).Replace("""=> "g";""", """=> "edited";""", StringComparison.Ordinal));
+
+        await Assert.That(Changed(before, Keys(root))).IsEquivalentTo(["Gen", "LibA", "App"]);
+    }
+
+    [Test]
+    public async Task RestoreSeesTheInjectedProperties()
+    {
+        var root = Checkout("repo");
+        Write(root, "LibB/LibB.csproj", Project("""<PackageReference Include="Newtonsoft.Json" Condition="'$(ContinuousIntegrationBuild)' == 'true'" />"""));
+        Write(root, "LibB/B.cs", "namespace LibB; public static class B { public static string Name() => Newtonsoft.Json.JsonConvert.SerializeObject(\"b\"); }");
+
+        await Assert.That(Keys(root).Count).IsEqualTo(4);
+    }
+
+    [Test]
     public async Task NewFileInADependencysOutputChangesDependentsKeys()
     {
         var root = Checkout("repo");
