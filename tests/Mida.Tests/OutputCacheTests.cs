@@ -104,6 +104,22 @@ public sealed class OutputCacheTests : IDisposable
     }
 
     [Test]
+    public async Task FailedBlobCheckDoesNotStickForTheRun()
+    {
+        var file = InRepo(repo, "bin/a", "a");
+        await Save(file);
+        var blob = Blob(OutputCache.Hash(file));
+        File.WriteAllText(blob, "tampered");
+        var cache = new OutputCache(store, repo);
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => cache.TryRestoreAsync(Key, Token));
+
+        File.WriteAllText(blob, "a");
+
+        await Assert.That(await cache.TryRestoreAsync(Key, Token)).IsNotNull();
+        await Assert.That(File.ReadAllText(file)).IsEqualTo("a");
+    }
+
+    [Test]
     [Arguments("""{"files":[{"path":"../evil","hash":"HASH","mode":null}],"references":[],"targets":[]}""")]
     [Arguments("""{"files":[],"references":[{"path":"../evil","source":"a"}],"targets":[]}""")]
     [Arguments("""{"files":[],"references":[{"path":"a","source":"../../secret"}],"targets":[]}""")]
@@ -125,6 +141,9 @@ public sealed class OutputCacheTests : IDisposable
     [Arguments("""{"files":[{"path":"a","hash":"HASH","mode":4096}],"references":[],"targets":[]}""")]
     [Arguments("""{"files":[{"path":"a\u0000b","hash":"HASH","mode":null}],"references":[],"targets":[]}""")]
     [Arguments("""{"files":[{"path":"","hash":"HASH","mode":null}],"references":[],"targets":[]}""")]
+    [Arguments("""{"files":[{"path":"a","hash":"HASH","mode":null},{"path":"a","hash":"HASH","mode":null}],"references":[],"targets":[]}""")]
+    [Arguments("""{"files":[{"path":"a","hash":"HASH","mode":null}],"references":[{"path":"a","source":"b"}],"targets":[]}""")]
+    [Arguments("""{"files":[{"path":"bin/a","hash":"HASH","mode":null},{"path":"bin/a/b","hash":"HASH","mode":null}],"references":[],"targets":[]}""")]
     [Arguments("""{"files":[null],"references":[],"targets":[]}""")]
     [Arguments("""{"files":[],"references":[null],"targets":[]}""")]
     [Arguments("""{"files":[],"references":[],"targets":[null]}""")]

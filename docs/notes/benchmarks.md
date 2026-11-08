@@ -43,6 +43,18 @@ macOS 27.2.0 arm64 (APFS), SDK 10, Debug. The 1024 column is from 2026-11-08, af
 | cache size | 39 MB | 47 MB | 111 MB |
 | key computation | 0.01 s | 0.2 s | 2 s |
 
+Linux arm64 in a Docker container on macOS, overlay2, SDK 11 rc.3 through the `net11.0` host, 1024 projects, 2026-11-08. Overlay cannot clone, so every hit copies:
+
+| scenario | 1024 |
+|---|---|
+| dotnet build, cold | 27.4 s |
+| mida build, empty cache | 39.3 s |
+| mida build, clean clone, all hits | 17.7 s |
+| body edit of the widest leaf, 1 miss | 17.2 s |
+| API edit of the widest leaf, 74 misses | 18.3 s |
+
+Plain copies cost nothing visible here, because these outputs are small: the cache is 103 MB. That says nothing about a repo whose `bin/` folders hold gigabytes of package DLLs, which plan 4b item 4 still has to measure.
+
 Findings:
 
 - The first 1024 run had an all-hit run slower than a cold `dotnet build` (33 s against 27 s). The phases were restore 21.5 s, graph evaluation 6.4 s, prediction 0.9 s, graph build with 1024 hits 6 s. The in-process restore had no `MaxNodeCount`, so it ran on one node; with `ProcessorCount` it takes 11 s, the same as `dotnet restore`, and the table above is after that fix.

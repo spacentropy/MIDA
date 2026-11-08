@@ -9,7 +9,7 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
 {
     private const int MaxUnixFileMode = 0xFFF;
 
-    private readonly ConcurrentDictionary<string, Lazy<bool>> verified = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> verified = new(StringComparer.Ordinal);
 
     public static string Hash(string file)
     {
@@ -99,7 +99,8 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
                 && t.Name.Length > 0
                 && t.Items.All(i => i is not null && i.Metadata.Values.All(v => v is not null)))
             // MSBuild hangs on a result that holds a target twice.
-            && manifest.Targets.DistinctBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Count() == manifest.Targets.Count;
+            && manifest.Targets.DistinctBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Count() == manifest.Targets.Count
+            && DistinctFiles(manifest);
         if (!valid)
         {
             throw new InvalidDataException($"Manifest {key} is malformed");
@@ -111,6 +112,20 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
         }
     }
 
+    // A path written twice gets whichever copy lands last, and a path that is another's directory fails one of them.
+    private static bool DistinctFiles(Manifest manifest)
+    {
+        var paths = new HashSet<string>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
+        var all = manifest.Files.Select(f => f.Path).Concat(manifest.References.Select(r => r.Path)).ToList();
+        return all.All(paths.Add) && !all.Any(p => Parents(p).Any(paths.Contains));
+    }
+
+    private static IEnumerable<string> Parents(string path)
+    {
+        var parts = path.Split('/');
+        return Enumerable.Range(1, parts.Length - 1).Select(i => string.Join('/', parts[..i]));
+    }
+
     private async Task RestoreAsync(ManifestFile file, CancellationToken cancellationToken)
     {
         var destination = Replaceable(file.Path);
@@ -119,12 +134,18 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
             throw new FileNotFoundException($"Blob {file.Hash} is missing", file.Path);
         }
 
-        // The same DLL lands in many bin/ folders, so checking each blob once per run saves most of the hashing.
-        if (!verified.GetOrAdd(file.Hash, hash => new Lazy<bool>(() => Hash(destination) == hash)).Value)
+        // The same DLL lands in many bin/ folders, so checking each blob once per run saves most of the hashing. Each check
+        // reads its own copy and only a pass is kept: another project's copy may be gone, and a failure must not stick.
+        if (!verified.ContainsKey(file.Hash))
         {
-            // shortcut: the blob stays, so this key misses until the cache is deleted. Upgrade when a store can delete.
-            Delete(destination);
-            throw new InvalidDataException($"Blob {file.Hash} is corrupt");
+            if (Hash(destination) != file.Hash)
+            {
+                // shortcut: the blob stays, so this key misses until the cache is deleted. Upgrade when a store can delete.
+                Delete(destination);
+                throw new InvalidDataException($"Blob {file.Hash} is corrupt");
+            }
+
+            verified.TryAdd(file.Hash, 0);
         }
 
         if (file.Mode is { } mode && !OperatingSystem.IsWindows())

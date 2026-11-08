@@ -73,7 +73,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
                 return result;
             }
         }
-        catch (Exception e) when (IsCacheFailure(e))
+        catch (Exception e) when (IsCacheFailure(e, cancellationToken))
         {
             logger.LogWarning($"Cache entry for {buildRequest.ProjectFullPath} not used: {e.Message}");
         }
@@ -83,7 +83,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
             // MSBuild's clean reads a file list the cache leaves out, so what a hit restored would be stored under this key.
             RemoveObsolete(entry, NoOutputs);
         }
-        catch (Exception e) when (IsCacheFailure(e))
+        catch (Exception e) when (IsCacheFailure(e, cancellationToken))
         {
             logger.LogWarning($"Outputs of {buildRequest.ProjectFullPath} not cleared: {e.Message}");
         }
@@ -110,7 +110,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
             // Now, not in the background: MSBuild merges later target results into this BuildResult.
             targets = targetResults.Capture(buildResult, fileAccessContext.Targets);
         }
-        catch (Exception e) when (IsCacheFailure(e))
+        catch (Exception e) when (IsCacheFailure(e, cancellationToken))
         {
             logger.LogWarning($"Outputs of {path} not stored: {e.Message}");
             return Task.CompletedTask;
@@ -149,16 +149,16 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
                 targets,
                 cancellationToken);
         }
-        catch (Exception e) when (IsCacheFailure(e))
+        catch (Exception e) when (IsCacheFailure(e, cancellationToken))
         {
             saveLogs.Enqueue(logger => logger.LogWarning($"Outputs of {path} not stored: {e.Message}"));
         }
     }
 
-    // A failure here is a miss: failing the build would make the cache a new way to break CI.
-    private static bool IsCacheFailure(Exception e) =>
-        e is IOException or UnauthorizedAccessException or InvalidOperationException or InvalidDataException
-            or KeyNotFoundException or ArgumentException or System.Text.Json.JsonException;
+    // Any failure is a miss: failing the build would make the cache a new way to break CI. An allow-list let a store's
+    // NotSupportedException or its own timeout fail the build with no message. Only the build's own cancellation passes.
+    private static bool IsCacheFailure(Exception e, CancellationToken build) =>
+        !(e is OperationCanceledException && build.IsCancellationRequested);
 
     private string Name(string path) => computer.Relative(path);
 
@@ -205,7 +205,7 @@ internal sealed class MidaCachePlugin(KeyComputer computer, ProjectGraphPredicti
             var properties = request.GlobalProperties.Select(p => KeyValuePair.Create(p.Name, p.EvaluatedValue));
             return keys[Name(request.ProjectFullPath)] = computer.Compute(entry.Key, entry.Value, request.TargetNames, properties, keys);
         }
-        catch (Exception e) when (IsCacheFailure(e))
+        catch (Exception e) when (IsCacheFailure(e, CancellationToken.None))
         {
             // A project without a key builds normally.
             Interlocked.Increment(ref failures);

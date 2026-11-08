@@ -14,7 +14,7 @@ Milestones 1 to 4 are done, and so are items 1 and 2 of milestone 4b and the pro
 
 Designed but not built: the GCS store, `--read-only`, the summary's time saved.
 
-Diagnostics today: `--cache <dir>` to use a store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 87 on net10.0 and 88 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
+Diagnostics today: `--cache <dir>` to use a store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 91 on net10.0 and 92 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
 
 The cache has run on a five-project repo on macOS arm64 and Linux arm64. It has not run on the 49-project repo yet, so the 3 s hit is a sum of spike timings, not a measurement.
 
@@ -127,9 +127,9 @@ Added 2026-11-07, not started. Two reviews of the finished milestone 4 by a seco
 Smaller, take them when nearby:
 
 - A cache entry can write any file in the checkout, not only its project's outputs: `Validate` in `src/Mida.Store/OutputCache.cs` only checks paths against the repo root. Reproduced with a hand-edited manifest, which wrote an executable `Directory.Build.targets` at the root. Security is not a priority, since the bucket is trusted CI infrastructure. A cheap guard against a buggy writer is to require paths under the project's `BaseOutputPath` and `BaseIntermediateOutputPath`, which `MidaCachePlugin.RemoveObsolete` already computes.
-- `IsCacheFailure` in `MidaCachePlugin.cs` is an allow-list. A store that throws `NotSupportedException`, `SecurityException` or an `OperationCanceledException` not from the build's own token would fail the build with no message. Milestone 5's GCS client makes this likely.
-- In `OutputCache.RestoreAsync`, the once-per-run blob check hashes whichever copy was restored first. If that project then misses and clears its outputs, the same blob misses for every other project for the rest of the run.
-- `Validate` accepts duplicate `files` paths, and a path that is a directory prefix of another. Both end in a miss or nondeterministic bytes.
+- Done 2026-11-08: `IsCacheFailure` in `MidaCachePlugin.cs` was an allow-list, so a store that threw `NotSupportedException`, `SecurityException` or its own `OperationCanceledException` failed the build with no message. Now every exception is a miss except the build's own cancellation.
+- Done 2026-11-08: in `OutputCache.RestoreAsync`, the once-per-run blob check hashed whichever copy was restored first and cached a failure, so one vanished copy made that blob miss for the rest of the run. Each check now reads its own copy, and only a pass is kept.
+- Done 2026-11-08: `Validate` accepted a path listed twice, in `files` or `references`, and a path that is a directory of another. Both are now malformed.
 - `Directory.Build.rsp` is ignored by the in-process `BuildManager`. Reasoned, not reproduced.
 
 ### 5. GCS store
