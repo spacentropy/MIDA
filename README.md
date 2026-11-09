@@ -79,4 +79,4 @@ dotnet test --project tests/Mida.Tests -f net10.0
 dotnet test --project tests/Mida.Tests -f net11.0
 ```
 
-The GCS tests start fake-gcs-server in Docker and skip without it. A release is a `v<version>` tag, which packs the tool and pushes it to nuget.org.
+The GCS tests start fake-gcs-server through Testcontainers and skip without a Docker that runs Linux containers. A release is a `v<version>` tag, which packs the tool and pushes it to nuget.org.

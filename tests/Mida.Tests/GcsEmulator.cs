@@ -1,10 +1,11 @@
-using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
 using Testcontainers.FakeGcsServer;
 using TUnit.Core.Interfaces;
 
 namespace Mida.Tests;
 
-/// <summary>fake-gcs-server through Testcontainers for the whole run. Without Docker, <see cref="Endpoint"/> is null and its tests skip.</summary>
+/// <summary>fake-gcs-server through Testcontainers for the whole run. Without Linux Docker, <see cref="Endpoint"/> is null and its tests skip.</summary>
 public sealed class GcsEmulator : IAsyncInitializer, IAsyncDisposable
 {
     public const string Bucket = "mida-test";
@@ -28,16 +29,13 @@ public sealed class GcsEmulator : IAsyncInitializer, IAsyncDisposable
 
     public async Task InitializeAsync()
     {
-        try
-        {
-            var started = new FakeGcsServerBuilder("fsouza/fake-gcs-server:1.56.1").Build();
-            await started.StartAsync();
-            container = started;
-        }
-        catch (DockerUnavailableException)
+        if (!await LinuxDocker())
         {
             return;
         }
+
+        container = new FakeGcsServerBuilder("fsouza/fake-gcs-server:1.56.1").Build();
+        await container.StartAsync();
 
         // The connection string ends in storage/v1/, and the emulator variable takes the server's root.
         var endpoint = new Uri(new Uri(container.GetConnectionString()), "/");
@@ -48,6 +46,21 @@ public sealed class GcsEmulator : IAsyncInitializer, IAsyncDisposable
         Endpoint = endpoint;
         // mida build runs as a child process, which inherits it.
         Environment.SetEnvironmentVariable("STORAGE_EMULATOR_HOST", endpoint.ToString());
+    }
+
+    /// <summary>
+    /// The image is Linux only. Windows runners have Docker with Windows containers, and macOS runners have none, but a
+    /// laptop can run Linux containers on either. Testcontainers keeps no endpoint when no daemon answers.
+    /// </summary>
+    private static async Task<bool> LinuxDocker()
+    {
+        if (TestcontainersSettings.OS.DockerEndpointAuthConfig is not { } endpoint)
+        {
+            return false;
+        }
+
+        using var client = endpoint.GetDockerClientBuilder(ResourceReaper.DefaultSessionId).Build();
+        return (await client.System.GetSystemInfoAsync()).OSType == "linux";
     }
 
     public async ValueTask DisposeAsync()
