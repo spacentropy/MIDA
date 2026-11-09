@@ -87,10 +87,17 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
         AddClosure(node, closure);
         var dependencies = closure.OrderBy(d => d.ProjectInstance.FullPath, StringComparer.Ordinal).ToList();
 
+        // MSBuild lets the project's own item win a path, so a match there is a coincidence that a later edit can break.
+        var own = OwnCopies(node.ProjectInstance);
         var copies = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var output in outputs.Where(o => o.StartsWith(directory, PathComparison)))
         {
             var name = Path.GetRelativePath(directory, output);
+            if (own.Contains(name))
+            {
+                continue;
+            }
+
             var source = dependencies
                 .Where(d => OutputNames(d).Contains(name))
                 .Select(d => Path.Combine(OutputDirectory(d.ProjectInstance), name))
@@ -103,6 +110,15 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> exclude
 
         return copies;
     }
+
+    /// <summary>Where the project's own items copy to in <c>bin/</c>, by the rule of MSBuild's AssignTargetPath.</summary>
+    private static HashSet<string> OwnCopies(ProjectInstance project) => project.Items
+        .Where(i => i.GetMetadataValue("CopyToOutputDirectory") is { Length: > 0 } copy && !copy.Equals("Never", StringComparison.OrdinalIgnoreCase))
+        .Select(i => (i.GetMetadataValue("TargetPath") is { Length: > 0 } target ? target
+            : i.GetMetadataValue("Link") is { Length: > 0 } link ? link
+            : i.GetMetadataValue("FullPath") is var full && full.StartsWith(WithSeparator(project.Directory), PathComparison) ? Path.GetRelativePath(project.Directory, full)
+            : Path.GetFileName(full)).Replace('\\', Path.DirectorySeparatorChar))
+        .ToHashSet(StringComparer.FromComparison(PathComparison));
 
     private static void AddClosure(ProjectGraphNode node, HashSet<ProjectGraphNode> closure)
     {

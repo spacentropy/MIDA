@@ -173,6 +173,62 @@ public sealed class OutputCacheTests : IDisposable
         await Assert.That(File.ReadAllText(file)).IsEqualTo("first");
     }
 
+    private sealed class CountingRemote(Func<int, Task<byte[]?>> get) : IObjectStore
+    {
+        private int gets;
+
+        public int Gets => gets;
+
+        public Task<bool> TryCreateAsync(string key, ReadOnlyMemory<byte> content, CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken) => get(Interlocked.Increment(ref gets));
+
+        public Task<bool> TryGetFileAsync(string key, string destinationFile, CancellationToken cancellationToken) => Task.FromResult(false);
+    }
+
+    [Test]
+    public async Task TieredMissesOfOneKeyDownloadItOnce()
+    {
+        var download = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remote = new CountingRemote(_ => download.Task);
+        var tiered = new TieredStore(store, remote);
+
+        var gets = Enumerable.Range(0, 8).Select(_ => tiered.GetAsync("k", Token)).ToList();
+        download.SetResult([1]);
+        await Task.WhenAll(gets);
+
+        await Assert.That(remote.Gets).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task TieredFailedDownloadIsNotReused()
+    {
+        var tiered = new TieredStore(store, new CountingRemote(n =>
+            n == 1 ? Task.FromException<byte[]?>(new HttpRequestException("first")) : Task.FromResult<byte[]?>([1])));
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => tiered.GetAsync("k", Token));
+
+        await Assert.That(await tiered.GetAsync("k", Token)).IsNotNull();
+    }
+
+    [Test]
+    public async Task TieredCallerCancellingLeavesTheDownloadToOthers()
+    {
+        var download = new TaskCompletionSource<byte[]?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var remote = new CountingRemote(_ => download.Task);
+        var tiered = new TieredStore(store, remote);
+        using var cancel = new CancellationTokenSource();
+
+        var cancelled = tiered.GetAsync("k", cancel.Token);
+        var other = tiered.GetAsync("k", Token);
+        await cancel.CancelAsync();
+        await Assert.ThrowsAsync<OperationCanceledException>(() => cancelled);
+
+        download.SetResult([1]);
+        await Assert.That(await other).IsNotNull();
+        await Assert.That(remote.Gets).IsEqualTo(1);
+    }
+
     [Test]
     [Arguments("""{"files":[{"path":"../evil","hash":"HASH","mode":null}],"references":[],"targets":[]}""")]
     [Arguments("""{"files":[],"references":[{"path":"../evil","source":"a"}],"targets":[]}""")]

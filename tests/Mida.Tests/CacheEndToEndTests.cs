@@ -223,6 +223,51 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsFailOn(clone, "edited");
     }
 
+    // A project's own copy wins over a dependency's at the same path, so an edit to the dependency's must not reach it.
+    [Test]
+    public async Task OwnCopyIsNotTakenFromADependency()
+    {
+        string WithOwnData(string root)
+        {
+            Write(root, "App/App.csproj", Project(Reference("LibA") + """<None Update="data.txt" CopyToOutputDirectory="PreserveNewest" />"""));
+            Write(root, "App/data.txt", "data");
+            return root;
+        }
+
+        Build(WithOwnData(Checkout("a")));
+
+        var clone = WithOwnData(Checkout("b"));
+        Edit(clone, "LibB/data.txt", "data", "edited");
+        await Assert.That(Build(clone)).Contains("1 hits, 4 misses");
+
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "App", "bin", "Debug", "net10.0", "data.txt"))).IsEqualTo("data");
+    }
+
+    // A file a target writes to bin/ is in no dependent's key, so the dependent hits while the dependency's file changes.
+    [Test]
+    public async Task OwnCopyIsNotTakenFromAFileADependencyGenerates()
+    {
+        const string Generate = """
+            <Target Name="Generate" AfterTargets="Build"><Copy SourceFiles="B.cs" DestinationFiles="$(OutDir)gen.txt" /></Target>
+            </Project>
+            """;
+        string WithGenerated(string root)
+        {
+            Edit(root, "LibB/LibB.csproj", "</Project>", Generate);
+            Write(root, "App/App.csproj", Project(Reference("LibA") + """<None Update="gen.txt" CopyToOutputDirectory="PreserveNewest" />"""));
+            File.Copy(Path.Combine(root, "LibB", "B.cs"), Path.Combine(root, "App", "gen.txt"));
+            return root;
+        }
+
+        Build(WithGenerated(Checkout("a")));
+
+        var clone = WithGenerated(Checkout("b"));
+        Edit(clone, "LibB/B.cs", """=> "b";""", """=> "edited";""");
+        await Assert.That(Build(clone)).Contains("4 hits, 1 misses");
+
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "App", "bin", "Debug", "net10.0", "gen.txt"))).DoesNotContain("edited");
+    }
+
     [Test]
     public async Task HitRemovesOutputsOfAnotherRevisionAndKeepsDependentsHitting()
     {
