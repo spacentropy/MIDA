@@ -1,0 +1,18 @@
+<Project>
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageVersion Include="Google.Apis.Auth" Version="1.78.0" />
+        <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
+        <PackageVersion Include="Microsoft.Build.Prediction" Version="1.2.44" />
+        <PackageVersion Include="System.CommandLine" Version="2.0.14" />
+        <PackageVersion Include="Testcontainers.FakeGcsServer" Version="4.16.0" />
+        <PackageVersion Include="TUnit" Version="1.81.5" />
+        <!-- 18.9 is the oldest supported API; SDK 11 exposes the same one. -->
+        <PackageVersion Include="Microsoft.Build" Version="18.9.6" />
+        <PackageVersion Include="Microsoft.Build.Framework" Version="18.9.6" />
+        <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="18.9.6" />
+        <PackageVersion Include="Microsoft.NET.StringTools" Version="18.9.6" />
+    </ItemGroup>
+</Project>

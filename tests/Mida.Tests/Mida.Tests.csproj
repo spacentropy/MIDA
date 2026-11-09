@@ -8,8 +8,8 @@
         <NoWarn>$(NoWarn);CA1515;CA1849</NoWarn>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="Testcontainers.FakeGcsServer" Version="4.16.0" />
-        <PackageReference Include="TUnit" Version="1.81.5" />
+        <PackageReference Include="Testcontainers.FakeGcsServer" />
+        <PackageReference Include="TUnit" />
     </ItemGroup>
     <ItemGroup>
         <ProjectReference Include="../../src/Mida/Mida.csproj" />

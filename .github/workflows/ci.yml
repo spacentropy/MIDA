@@ -24,5 +24,4 @@ jobs:
           # The net10.0 run builds its fixtures with SDK 10, since that build of mida cannot load SDK 11.
           dotnet-version: 10.0.x
           global-json-file: global.json
-      # The GCS tests need Docker with Linux containers. macOS runners have no Docker, so they skip there.
       - run: dotnet test --project tests/Mida.Tests -f ${{ matrix.framework }}
