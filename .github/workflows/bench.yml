@@ -47,7 +47,7 @@ jobs:
             echo 'read it back:' "$(dd if=/tmp/dd.bin of=/dev/null bs=1M iflag=direct 2>&1 | tail -1)"
             rm /tmp/dd.bin
             echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - run: dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
         env:
           MIDA_BENCH_COUNT: 1024
