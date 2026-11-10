@@ -34,6 +34,20 @@ jobs:
       - run: gh run download "$(gh run list --workflow bench.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')" --name bench-${{ matrix.scenario }} --dir previous || true
         env:
           GH_TOKEN: ${{ github.token }}
+      # What this runner is, since runners differ: one commit's Fresh ratio moved by 23% between two runs.
+      # The benchmark's checkouts and caches are under /tmp.
+      - run: |
+          {
+            echo '```'
+            lscpu | grep -E 'Model name|^CPU\(s\):|Thread|L3'
+            grep -m1 -o -w sha_ni /proc/cpuinfo || echo 'no sha_ni'
+            free -h
+            df -hT /tmp
+            echo 'write 1 GiB:' "$(dd if=/dev/zero of=/tmp/dd.bin bs=1M count=1024 conv=fdatasync 2>&1 | tail -1)"
+            echo 'read it back:' "$(dd if=/tmp/dd.bin of=/dev/null bs=1M iflag=direct 2>&1 | tail -1)"
+            rm /tmp/dd.bin
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
         env:
           MIDA_BENCH_COUNT: 1024

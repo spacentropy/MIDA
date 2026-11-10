@@ -85,11 +85,12 @@ public sealed class Benchmarks : IDisposable
         }
 
         var (plain, seconds, output, cache) = (double.MaxValue, double.MaxValue, string.Empty, filledCache);
+        var runs = new List<string>();
         for (var i = 0; i < Repeats; i++)
         {
             // The same repo without mida, on the same machine: seconds differ between machines, the ratio to this far less.
             var baseline = Generate("baseline");
-            plain = Math.Min(plain, Time(() => Dotnet(baseline.Root, null, "build", "Repo.slnx"), out _));
+            var (plainSeconds, plainLoad) = Time(() => Dotnet(baseline.Root, null, "build", "Repo.slnx"), out _);
             Directory.Delete(baseline.Root, recursive: true);
 
             // Its own copy of the cache, since a run with misses adds to it.
@@ -97,11 +98,14 @@ public sealed class Benchmarks : IDisposable
             Copy(filledCache, cache);
             var clone = Generate("some/deeper/path/b");
             var misses = edit(clone);
-            seconds = Math.Min(seconds, Time(() => Mida(clone, cache), out output));
+            var (midaSeconds, midaLoad) = Time(() => Mida(clone, cache), out output);
 
             // A run that hits or misses the wrong projects has no time worth comparing.
             await Assert.That(output).Contains($"{Count - misses} hits, {misses} misses");
             Directory.Delete(clone.Root, recursive: true);
+
+            (plain, seconds) = (Math.Min(plain, plainSeconds), Math.Min(seconds, midaSeconds));
+            runs.Add($"| {i + 1} | {plainSeconds:F1} s | {plainLoad} | {midaSeconds:F1} s | {midaLoad} |");
         }
 
         var ratio = seconds / plain;
@@ -121,20 +125,48 @@ public sealed class Benchmarks : IDisposable
 
             Fastest of {Repeats}, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
+            | run | dotnet build | machine meanwhile | mida build | machine meanwhile |
+            |---|---|---|---|---|
+            {string.Join('\n', runs)}
+
             """;
         await File.WriteAllTextAsync(path + ".md", table);
         await File.WriteAllTextAsync(path + ".ratio", ratio.ToString("F3", CultureInfo.InvariantCulture));
         TestContext.Current!.Output.WriteLine($"{path}.md\n{table}");
     }
 
-    private double Time(Func<string> run, out string output)
+    private (double Seconds, string Load) Time(Func<string> run, out string output)
     {
         // A CI runner starts with no build servers, and a compiler server left by the run before would flatter this one.
         Run(temp, null, "build-server", "shutdown");
+        var before = CpuTicks();
         var watch = Stopwatch.StartNew();
         output = run();
-        return watch.Elapsed.TotalSeconds;
+        return (watch.Elapsed.TotalSeconds, Load(before));
     }
+
+    /// <summary>
+    /// What the whole machine did since <paramref name="before"/>, which tells a slow disk or a crowded host from slow
+    /// code: on hosted runners one commit's Fresh ratio moved by 23%. Empty off Linux.
+    /// </summary>
+    private static string Load(long[] before)
+    {
+        if (before.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        // Of the numbers on the first line of /proc/stat, the fourth, fifth and eighth are idle, iowait and steal.
+        var ticks = CpuTicks().Zip(before, (now, was) => now - was).ToArray();
+        double total = ticks.Sum();
+        var available = File.ReadLines("/proc/meminfo").First(l => l.StartsWith("MemAvailable:", StringComparison.Ordinal));
+        var gigabytes = long.Parse(available.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1], CultureInfo.InvariantCulture) / 1048576.0;
+        return $"{100 * (total - ticks[3] - ticks[4]) / total:F0}% busy, {100 * ticks[4] / total:F0}% iowait, {100 * ticks[7] / total:F0}% steal, {gigabytes:F1} GB available after";
+    }
+
+    private static long[] CpuTicks() => File.Exists("/proc/stat")
+        ? [.. File.ReadLines("/proc/stat").First().Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(8).Select(t => long.Parse(t, CultureInfo.InvariantCulture))]
+        : [];
 
     private static void Copy(string source, string destination)
     {

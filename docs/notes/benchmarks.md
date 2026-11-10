@@ -41,6 +41,21 @@ Run: `MIDA_BENCH_COUNT=1024 dotnet test --project tests/Mida.Tests -f net10.0 --
 
 `.github/workflows/bench.yml` runs the four scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster.
 
+Each summary also says what the runner is: CPU model, memory, disk and how fast that disk writes and reads. For each of the three repetitions it says what the whole machine did meanwhile: CPU busy, iowait and steal, and the memory left.
+
+First numbers, 2026-11-10, Ubuntu 24.04 x64 with 4 processors, two runs of commit `6a619fd`:
+
+| scenario | dotnet build | mida build | mida / dotnet | the same commit again |
+|---|---|---|---|---|
+| Fresh | 114.2 s | 113.1 s | 0.99 | 1.22 |
+| Unchanged | 119.4 s | 84.7 s | 0.71 | 0.71 |
+| BodyEdit | 139.5 s | 108.0 s | 0.77 | 0.72 |
+| ApiEdit | 116.4 s | 87.8 s | 0.75 | 0.71 |
+
+So `Unchanged` compares between runs, and the edits need a difference above about 10%. `Fresh` does not compare yet: its `mida build` took 143.7 s in two runs and 113.1 s in one, against a plain build of 114 to 118 s in all three. The cause is not known, which is what the machine readout is for.
+
+A job takes 14 to 18 minutes. A hosted runner's disk does not hold seven built checkouts of this size, so each is deleted once it is timed.
+
 ## Numbers
 
 These tables predate the method above: one iteration, build servers left warm, and both edits made in one checkout after its hit.
