@@ -76,27 +76,32 @@ public sealed class Benchmarks : IDisposable
 
         // What an earlier CI run left: the cache a runner restores before it builds its own clean clone at another path.
         var filledCache = Path.Combine(temp, "cache");
+        // A built checkout goes as soon as it is timed: at 1024 projects a hosted runner's disk held six of them, not seven.
         if (filled)
         {
-            Mida(Generate("a"), filledCache);
+            var writer = Generate("a");
+            Mida(writer, filledCache);
+            Directory.Delete(writer.Root, recursive: true);
         }
 
         var (plain, seconds, output, cache) = (double.MaxValue, double.MaxValue, string.Empty, filledCache);
         for (var i = 0; i < Repeats; i++)
         {
             // The same repo without mida, on the same machine: seconds differ between machines, the ratio to this far less.
-            var baseline = Generate($"baseline{i}");
+            var baseline = Generate("baseline");
             plain = Math.Min(plain, Time(() => Dotnet(baseline.Root, null, "build", "Repo.slnx"), out _));
+            Directory.Delete(baseline.Root, recursive: true);
 
             // Its own copy of the cache, since a run with misses adds to it.
             cache = Path.Combine(temp, $"cache{i}");
             Copy(filledCache, cache);
-            var clone = Generate($"some/deeper/path/b{i}");
+            var clone = Generate("some/deeper/path/b");
             var misses = edit(clone);
             seconds = Math.Min(seconds, Time(() => Mida(clone, cache), out output));
 
             // A run that hits or misses the wrong projects has no time worth comparing.
             await Assert.That(output).Contains($"{Count - misses} hits, {misses} misses");
+            Directory.Delete(clone.Root, recursive: true);
         }
 
         var ratio = seconds / plain;
