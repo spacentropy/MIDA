@@ -63,9 +63,12 @@ internal static class TestRepo
         return $"<Solution>{string.Concat(projects)}</Solution>";
     }
 
-    public static (int ExitCode, string Output) Run(string directory, string? packages, params string[] arguments)
+    public static (int ExitCode, string Output) Run(string directory, string? packages, params string[] arguments) =>
+        Start("dotnet", directory, packages, arguments);
+
+    public static (int ExitCode, string Output) Start(string file, string directory, string? packages, params string[] arguments)
     {
-        var start = new ProcessStartInfo("dotnet", arguments)
+        var start = new ProcessStartInfo(file, arguments)
         {
             WorkingDirectory = directory,
             RedirectStandardOutput = true,

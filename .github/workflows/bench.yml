@@ -1,0 +1,46 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Reads the last run's numbers.
+  actions: read
+
+jobs:
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Tests of tests/Mida.Tests/Benchmarks.cs. Every job builds its own cache and its own plain dotnet build to compare with.
+        scenario: [Fresh, Unchanged, BodyEdit, ApiEdit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          # The generated repo pins SDK 10, which the numbers in docs/notes/benchmarks.md are on.
+          dotnet-version: 10.0.x
+          global-json-file: global.json
+      # The packed tool, installed the way a user installs it.
+      - run: |
+          dotnet pack src/Mida -c Release -p:Version=0.0.0-bench -o out
+          dotnet tool install -g mida --version 0.0.0-bench --add-source out --framework net10.0
+      # The last green run on main, to compare with. The first run has none.
+      - run: gh run download "$(gh run list --workflow bench.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')" --name bench-${{ matrix.scenario }} --dir previous || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
+        env:
+          MIDA_BENCH_COUNT: 1024
+          MIDA_BENCH_TOOL: mida
+          MIDA_BENCH_PREVIOUS: ${{ github.workspace }}/previous
+      - run: cat TestResults/bench-*.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bench-${{ matrix.scenario }}
+          path: TestResults/bench-*

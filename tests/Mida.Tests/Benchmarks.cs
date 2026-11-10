@@ -1,74 +1,143 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using static Mida.Tests.TestRepo;
 
 namespace Mida.Tests;
 
 /// <summary>
-/// Wall-clock runs of the scenarios in docs/notes/benchmarks.md. Never part of the suite:
-/// dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/Build128" --output Detailed
+/// Wall-clock runs of the scenarios in docs/notes/benchmarks.md, one per test, each beside a plain dotnet build of the
+/// same repo on the same machine. Never part of the suite:
+/// dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/Unchanged" --output Detailed
+/// MIDA_BENCH_COUNT is the number of projects, 128 unless set. .github/workflows/bench.yml runs them on the packed tool.
 /// </summary>
 [Explicit]
 [NotInParallel]
 public sealed class Benchmarks : IDisposable
 {
-    private readonly string temp = Directory.CreateTempSubdirectory("mida-bench-").FullName;
-    private readonly List<string> rows = [];
+    // The fastest of these counts: between single runs of one commit the ratio moved by 7%.
+    private const int Repeats = 3;
+
+    private static readonly int Count = int.Parse(Environment.GetEnvironmentVariable("MIDA_BENCH_COUNT") ?? "128", CultureInfo.InvariantCulture);
+
+    private readonly string temp = Temp();
 
     public void Dispose() => Directory.Delete(temp, recursive: true);
 
     [Test]
-    public Task Build8() => Build(8);
+    public Task Fresh() => Measure(filled: false, _ => Count);
 
     [Test]
-    public Task Build128() => Build(128);
+    public Task Unchanged() => Measure(filled: true, _ => 0);
 
     [Test]
-    public Task Build1024() => Build(1024);
-
-    private async Task Build(int count)
+    public Task BodyEdit() => Measure(filled: true, clone =>
     {
-        // shortcut: multi-targeting off, since net10.0;net11.0 needs SDK 11, which only the net11.0 host loads, and the
-        // numbers are on SDK 10. Pass multiTargetEvery: 5 when the benchmark moves to -f net11.0.
-        GeneratedRepo Generate(string name) => GeneratedRepo.Generate(Path.Combine(temp, name), count);
-        var cache = Path.Combine(temp, "cache");
-        string Mida(GeneratedRepo repo) => Dotnet(repo.Root, null, Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", cache);
+        clone.BodyEdit(WidestLeaf(clone));
+        return 1;
+    });
 
-        var baseline = Generate("baseline");
-        Measure("dotnet build, cold", () => Dotnet(baseline.Root, null, "build", "Repo.slnx"));
-
-        var writer = Generate("a");
-        Measure("mida build, empty cache", () => Mida(writer));
-
-        var clone = Generate("some/deeper/path/b");
-        Measure("mida build, clean clone", () => Mida(clone));
-
-        var leaf = clone.Libraries.Where(p => p.Layer == 0).MaxBy(p => clone.Dependents(p).Count)!;
-        var dependents = clone.Dependents(leaf).Count;
-        clone.BodyEdit(leaf);
-        Measure($"mida build, body edit of {leaf.Name} ({dependents} dependents)", () => Mida(clone));
+    [Test]
+    public Task ApiEdit() => Measure(filled: true, clone =>
+    {
+        var leaf = WidestLeaf(clone);
         clone.ApiEdit(leaf);
-        Measure($"mida build, API edit of {leaf.Name} ({dependents} dependents)", () => Mida(clone));
+        return clone.Dependents(leaf).Count;
+    });
 
-        var megabytes = Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1_000_000;
-        var table = $"""
-            {count} projects, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}
+    private static GeneratedRepo.Project WidestLeaf(GeneratedRepo repo) =>
+        repo.Libraries.Where(p => p.Layer == 0).MaxBy(p => repo.Dependents(p).Count)!;
 
-            | scenario | s | result |
-            |---|---|---|
-            {string.Join('\n', rows)}
+    // shortcut: multi-targeting off, since net10.0;net11.0 needs SDK 11, which only the net11.0 host loads, and the
+    // numbers are on SDK 10. Pass multiTargetEvery: 5 when the benchmark moves to -f net11.0.
+    private GeneratedRepo Generate(string name) => GeneratedRepo.Generate(Path.Combine(temp, name), Count);
 
-            """;
-        var path = Path.Combine(TestContext.ResultsDirectory, $"bench-{count}.md");
-        await File.WriteAllTextAsync(path, table);
-        TestContext.Current!.Output.WriteLine($"{path}\n{table}");
+    // CI names the packed tool it installed, which is what users run. Without one, the build beside the tests runs.
+    private static string Mida(GeneratedRepo repo, string cache)
+    {
+        string[] build = ["build", "Repo.slnx", "--cache", cache];
+        var (exitCode, output) = Environment.GetEnvironmentVariable("MIDA_BENCH_TOOL") is { Length: > 0 } tool
+            ? Start(tool, repo.Root, null, build)
+            : Run(repo.Root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), .. build]);
+        if (exitCode != 0)
+        {
+            Assert.Fail(output);
+        }
+
+        return output;
     }
 
-    private void Measure(string scenario, Func<string> run)
+    /// <summary>Times a clean clone, which <paramref name="edit"/> changes and says how many projects must then miss.</summary>
+    private async Task Measure(bool filled, Func<GeneratedRepo, int> edit, [CallerMemberName] string scenario = "")
     {
-        var watch = Stopwatch.StartNew();
-        var output = run();
+        // Package downloads and dotnet's first-run setup are not what is measured, so a small repo pays for them first.
+        Dotnet(GeneratedRepo.Generate(Path.Combine(temp, "prime"), 8).Root, null, "restore", "Repo.slnx");
+
+        // What an earlier CI run left: the cache a runner restores before it builds its own clean clone at another path.
+        var filledCache = Path.Combine(temp, "cache");
+        if (filled)
+        {
+            Mida(Generate("a"), filledCache);
+        }
+
+        var (plain, seconds, output, cache) = (double.MaxValue, double.MaxValue, string.Empty, filledCache);
+        for (var i = 0; i < Repeats; i++)
+        {
+            // The same repo without mida, on the same machine: seconds differ between machines, the ratio to this far less.
+            var baseline = Generate($"baseline{i}");
+            plain = Math.Min(plain, Time(() => Dotnet(baseline.Root, null, "build", "Repo.slnx"), out _));
+
+            // Its own copy of the cache, since a run with misses adds to it.
+            cache = Path.Combine(temp, $"cache{i}");
+            Copy(filledCache, cache);
+            var clone = Generate($"some/deeper/path/b{i}");
+            var misses = edit(clone);
+            seconds = Math.Min(seconds, Time(() => Mida(clone, cache), out output));
+
+            // A run that hits or misses the wrong projects has no time worth comparing.
+            await Assert.That(output).Contains($"{Count - misses} hits, {misses} misses");
+        }
+
+        var ratio = seconds / plain;
+        var path = Path.Combine(TestContext.ResultsDirectory, $"bench-{scenario}-{Count}");
+
+        // CI puts the last run's files here. Unset, the directory is one that holds none.
+        var previous = Path.Combine(Environment.GetEnvironmentVariable("MIDA_BENCH_PREVIOUS") ?? temp, Path.GetFileName(path) + ".ratio");
+        var change = File.Exists(previous) && double.Parse(await File.ReadAllTextAsync(previous), CultureInfo.InvariantCulture) is var last
+            ? $"{last:F2} ({(ratio - last) / last:+0%;-0%})"
+            : "none";
+        var megabytes = Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1_000_000;
         var result = string.Join("; ", output.Split('\n').Where(l => l.Contains(" keys in ", StringComparison.Ordinal) || l.Contains(" hits, ", StringComparison.Ordinal)).Select(l => l.Trim()));
-        rows.Add($"| {scenario} | {watch.Elapsed.TotalSeconds:F1} | {result} |");
+        var table = $"""
+            | scenario | projects | dotnet build | mida build | mida / dotnet | last run | result |
+            |---|---|---|---|---|---|---|
+            | {scenario} | {Count} | {plain:F1} s | {seconds:F1} s | {ratio:F2} | {change} | {result} |
+
+            Fastest of {Repeats}, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+
+            """;
+        await File.WriteAllTextAsync(path + ".md", table);
+        await File.WriteAllTextAsync(path + ".ratio", ratio.ToString("F3", CultureInfo.InvariantCulture));
+        TestContext.Current!.Output.WriteLine($"{path}.md\n{table}");
+    }
+
+    private double Time(Func<string> run, out string output)
+    {
+        // A CI runner starts with no build servers, and a compiler server left by the run before would flatter this one.
+        Run(temp, null, "build-server", "shutdown");
+        var watch = Stopwatch.StartNew();
+        output = run();
+        return watch.Elapsed.TotalSeconds;
+    }
+
+    private static void Copy(string source, string destination)
+    {
+        foreach (var file in Directory.Exists(source) ? Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories) : [])
+        {
+            var target = Path.Combine(destination, Path.GetRelativePath(source, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target);
+        }
     }
 }

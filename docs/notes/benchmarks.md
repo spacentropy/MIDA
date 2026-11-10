@@ -1,6 +1,6 @@
 # Benchmarks and the test harness
 
-Status: built 2026-11-07. Code: `tests/Mida.Tests/GeneratedRepo.cs` (generator), `GeneratedRepoTests.cs` (correctness, in the suite), `Benchmarks.cs` (timing, `[Explicit]`).
+Status: built 2026-11-07, CI jobs added 2026-11-10. Code: `tests/Mida.Tests/GeneratedRepo.cs` (generator), `GeneratedRepoTests.cs` (correctness, in the suite), `Benchmarks.cs` (timing, `[Explicit]`), `.github/workflows/bench.yml`.
 
 ## One generator, two consumers
 
@@ -25,11 +25,25 @@ The hand-written `TestRepo` stays for the targeted scenarios (analyzer dependenc
 | 3 | partial: {body, API} × {leaf, mid, root} edit | exact miss count, exact failing tests | leaf only: wall time, hits/misses |
 | 4 | later: `mida test` after the same edits | exactly the closure's test projects run | |
 
-Every run includes restore, so the rows compare. One iteration each; run it again if a number looks off. Multi-targeting is off in the benchmark. Its dependents get keys since plan 4b item 1, but the generator's `net10.0;net11.0` needs SDK 11, which only the `net11.0` host loads, and the numbers below are on SDK 10.
+Every run includes restore, so the rows compare. Multi-targeting is off in the benchmark. Its dependents get keys since plan 4b item 1, but the generator's `net10.0;net11.0` needs SDK 11, which only the `net11.0` host loads, and the numbers below are on SDK 10.
 
-Run: `dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/Build128" --output Detailed`. Each size writes `TestResults/bench-<N>.md`; paste it below. 1024 takes about five minutes on a laptop.
+Since 2026-11-10 each scenario is its own test: `Fresh`, `Unchanged`, `BodyEdit` and `ApiEdit`. Each one is shaped like a CI run:
+
+- The edits and `Unchanged` start from a clean clone at another path, with a cache that an earlier build filled.
+- Build servers are shut down before every timed run, because a runner starts with none.
+- A plain `dotnet build` of the same repo is timed beside it, and the number to compare is the ratio `mida / dotnet`. Seconds differ between machines, the ratio far less.
+- Both times are the fastest of three. Between single runs of one commit the ratio moved by 7% on a laptop. With the fastest of three, two runs at 1024 projects agreed within 1%, and one scenario takes about four and a half minutes there.
+- The test fails unless the run hits and misses exactly the projects the graph says.
+
+Run: `MIDA_BENCH_COUNT=1024 dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/*" --output Detailed`, or name one scenario in place of the `*`. The count is 128 unless set. Each scenario writes `TestResults/bench-<scenario>-<count>.md`. `MIDA_BENCH_TOOL` names an installed mida to run in place of the build beside the tests.
+
+## In CI
+
+`.github/workflows/bench.yml` runs the four scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster.
 
 ## Numbers
+
+These tables predate the method above: one iteration, build servers left warm, and both edits made in one checkout after its hit.
 
 macOS 27.2.0 arm64 (APFS), SDK 10, Debug. The 1024 column is from 2026-11-08, after the stall fix below. The 8 and 128 columns are from 2026-11-07 and predate the restore fix below, so they overstate restore. The generated projects are one class each, so compile is nearly free and these numbers are the cache's overhead, not its saving. The real saving shows on a repo whose compile costs something: see [local-store.md](local-store.md) and plan 4b item 4.
 
