@@ -1,0 +1,38 @@
+name: Real world
+
+# Builds other people's repos, so it runs only when asked.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  realworld:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Tests of tests/Mida.Tests/RealWorld.cs. Each clones one repo at a pinned tag and builds it four times.
+        repo: [OrchardCore, Abp]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          # Both repos target net10.0. Abp pins SDK 10, and OrchardCore rolls forward to the newest SDK installed.
+          dotnet-version: 10.0.x
+          global-json-file: global.json
+      # The packed tool, installed the way a user installs it. On .NET 11, which loads either SDK.
+      - run: |
+          dotnet pack src/Mida -c Release -p:Version=0.0.0-realworld -o out
+          dotnet tool install -g mida --version 0.0.0-realworld --add-source out --framework net11.0
+      - run: dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/${{ matrix.repo }}" --output Detailed
+        env:
+          MIDA_BENCH_TOOL: mida
+      - if: always()
+        run: cat TestResults/realworld-*.md >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: realworld-${{ matrix.repo }}
+          path: TestResults/realworld-*

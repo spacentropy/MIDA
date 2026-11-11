@@ -32,6 +32,8 @@ The key must be computed during the build. Reference assemblies do not exist in 
 
 Missing keys are safe: if a key cannot be computed, a warning is logged and the project builds normally. A multi-targeted project has several graph nodes, gets no key, and builds normally. Its dependents do get keys since plan 4b item 1: a dependency that is an outer node adds the lines of every inner node.
 
+Since 2026-11-12 a project with one framework in `TargetFrameworks` gets keys, because OrchardCore writes all 227 of its projects that way and got none. Such a project has two graph nodes, an outer one and one inner one, which the `TargetFramework` global property tells apart. So a node is looked up by path and that property, and the inner node's name in keys and `--print-keys` ends in ` (net10.0)`. The inner node is keyed and stored as any project. The outer node writes no files, so its entry holds only target results, and a miss clears nothing. Its key has its own inputs and the inner node's reference assembly, so a body edit of the project misses the inner node alone. A build-time reference to such a project adds the keys of both nodes, since the outer one says nothing of the generator's behaviour.
+
 ## Results
 
 Real repo, clean checkouts:

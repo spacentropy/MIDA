@@ -43,6 +43,8 @@ internal static class TestRepo
     public static string Checkout(string root)
     {
         Write(root, "Repo.slnx", Solution());
+        // Its own, as a repo has: with only the one above, a clone deeper below it would find it further up, and no stored graph would fit.
+        Write(root, "global.json", GlobalJson);
         Write(root, "Directory.Build.props", "<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup></Project>");
         Write(root, "Directory.Packages.props", """<Project><ItemGroup><PackageVersion Include="Newtonsoft.Json" Version="13.0.3" /></ItemGroup></Project>""");
         Write(root, "App/App.csproj", Project(Reference("LibA")));
@@ -66,7 +68,11 @@ internal static class TestRepo
     public static (int ExitCode, string Output) Run(string directory, string? packages, params string[] arguments) =>
         Start("dotnet", directory, packages, arguments);
 
-    public static (int ExitCode, string Output) Start(string file, string directory, string? packages, params string[] arguments)
+    public static (int ExitCode, string Output) Start(string file, string directory, string? packages, params string[] arguments) =>
+        Start(file, directory, packages, new Dictionary<string, string>(), arguments);
+
+    public static (int ExitCode, string Output) Start(
+        string file, string directory, string? packages, IReadOnlyDictionary<string, string> environment, params string[] arguments)
     {
         var start = new ProcessStartInfo(file, arguments)
         {
@@ -80,6 +86,11 @@ internal static class TestRepo
         if (packages is not null)
         {
             start.Environment["NUGET_PACKAGES"] = packages;
+        }
+
+        foreach (var (name, value) in environment)
+        {
+            start.Environment[name] = value;
         }
 
         using var process = Process.Start(start)!;

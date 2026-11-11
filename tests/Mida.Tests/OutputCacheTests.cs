@@ -49,7 +49,7 @@ public sealed class OutputCacheTests : IDisposable
 
         var other = Path.Combine(temp, "other");
         InRepo(other, "Lib/bin/lib.dll", "current");
-        var manifest = await new OutputCache(store, other).TryRestoreAsync(Key, Token);
+        var manifest = await new OutputCache(store, other).TryRestoreAsync(Key, null, Token);
 
         Assert.NotNull(manifest);
         await Assert.That(manifest.Targets[0].Items[0].Spec).IsEqualTo("{RepoRoot}/App/bin/app");
@@ -72,14 +72,14 @@ public sealed class OutputCacheTests : IDisposable
         var existing = InRepo(other, "bin/a", "old");
         File.SetAttributes(existing, FileAttributes.ReadOnly);
 
-        await new OutputCache(store, other).TryRestoreAsync(Key, Token);
+        await new OutputCache(store, other).TryRestoreAsync(Key, null, Token);
 
         await Assert.That(File.ReadAllText(existing)).IsEqualTo("new");
     }
 
     [Test]
     public async Task UnknownKeyIsAMiss() =>
-        await Assert.That(await new OutputCache(store, repo).TryRestoreAsync(Key, Token)).IsNull();
+        await Assert.That(await new OutputCache(store, repo).TryRestoreAsync(Key, null, Token)).IsNull();
 
     [Test]
     public async Task MissingBlobThrows()
@@ -88,7 +88,7 @@ public sealed class OutputCacheTests : IDisposable
         await Save(file);
         File.Delete(Blob(OutputCache.Hash(file)));
 
-        await Assert.ThrowsExactlyAsync<FileNotFoundException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, Token));
+        await Assert.ThrowsExactlyAsync<FileNotFoundException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, null, Token));
     }
 
     [Test]
@@ -98,7 +98,7 @@ public sealed class OutputCacheTests : IDisposable
         await Save(file);
         File.WriteAllText(Blob(OutputCache.Hash(file)), "tampered");
 
-        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, Token));
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, null, Token));
 
         await Assert.That(File.Exists(file)).IsFalse();
     }
@@ -111,11 +111,11 @@ public sealed class OutputCacheTests : IDisposable
         var blob = Blob(OutputCache.Hash(file));
         File.WriteAllText(blob, "tampered");
         var cache = new OutputCache(store, repo);
-        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => cache.TryRestoreAsync(Key, Token));
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => cache.TryRestoreAsync(Key, null, Token));
 
         File.WriteAllText(blob, "a");
 
-        await Assert.That(await cache.TryRestoreAsync(Key, Token)).IsNotNull();
+        await Assert.That(await cache.TryRestoreAsync(Key, null, Token)).IsNotNull();
         await Assert.That(File.ReadAllText(file)).IsEqualTo("a");
     }
 
@@ -129,7 +129,7 @@ public sealed class OutputCacheTests : IDisposable
         File.WriteAllText(file, "second");
         await Assert.That(await Save(file)).IsFalse();
 
-        await new OutputCache(store, repo).TryRestoreAsync(Key, Token);
+        await new OutputCache(store, repo).TryRestoreAsync(Key, null, Token);
         await Assert.That(File.ReadAllText(file)).IsEqualTo("first");
     }
 
@@ -141,7 +141,7 @@ public sealed class OutputCacheTests : IDisposable
         await Assert.That(await cache.SaveAsync(Key, [file], [], [], TimeSpan.FromSeconds(1), Token)).IsTrue();
         await Assert.That(await cache.SaveAsync(Key, [file], [], [], TimeSpan.FromSeconds(2), Token)).IsTrue();
 
-        await Assert.That((await cache.TryRestoreAsync(Key, Token))?.BuildTime).IsEqualTo(TimeSpan.FromSeconds(1));
+        await Assert.That((await cache.TryRestoreAsync(Key, null, Token))?.BuildTime).IsEqualTo(TimeSpan.FromSeconds(1));
     }
 
     [Test]
@@ -151,11 +151,11 @@ public sealed class OutputCacheTests : IDisposable
         await new OutputCache(remote, repo).SaveAsync(Key, [InRepo(repo, "bin/a", "a")], [], [], TimeSpan.Zero, Token);
 
         var other = Path.Combine(temp, "other");
-        await Assert.That(await new OutputCache(new TieredStore(store, remote), other).TryRestoreAsync(Key, Token)).IsNotNull();
+        await Assert.That(await new OutputCache(new TieredStore(store, remote), other).TryRestoreAsync(Key, null, Token)).IsNotNull();
 
         await Assert.That(File.ReadAllText(Path.Combine(other, "bin", "a"))).IsEqualTo("a");
         Directory.Delete(Path.Combine(temp, "remote"), recursive: true);
-        await Assert.That(await new OutputCache(store, Path.Combine(temp, "third")).TryRestoreAsync(Key, Token)).IsNotNull();
+        await Assert.That(await new OutputCache(store, Path.Combine(temp, "third")).TryRestoreAsync(Key, null, Token)).IsNotNull();
     }
 
     [Test]
@@ -169,7 +169,7 @@ public sealed class OutputCacheTests : IDisposable
         var tiered = new OutputCache(new TieredStore(store, remote), repo);
         await Assert.That(await tiered.SaveAsync(Key, [file], [], [], TimeSpan.Zero, Token)).IsFalse();
 
-        await tiered.TryRestoreAsync(Key, Token);
+        await tiered.TryRestoreAsync(Key, null, Token);
         await Assert.That(File.ReadAllText(file)).IsEqualTo("first");
     }
 
@@ -290,7 +290,7 @@ public sealed class OutputCacheTests : IDisposable
         var manifest = json.Replace("HASH", new string('a', 64), StringComparison.Ordinal);
         await store.TryCreateAsync("v1/ac/" + Key, Encoding.UTF8.GetBytes(manifest), Token);
 
-        await Assert.ThrowsExactlyAsync<TException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, Token));
+        await Assert.ThrowsExactlyAsync<TException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, null, Token));
 
         await Assert.That(File.ReadAllText(existing)).IsEqualTo("existing");
     }

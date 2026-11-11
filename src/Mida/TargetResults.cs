@@ -15,13 +15,13 @@ internal sealed class TargetResults(string repoRoot)
 {
     private readonly (string Path, string Token) repo = (repoRoot + Path.DirectorySeparatorChar, "{RepoRoot}/");
 
-    public List<ManifestTarget> Capture(BuildResult result, IEnumerable<string> targets, ProjectInstance project)
+    public List<ManifestTarget> Capture(BuildResult result, IEnumerable<string> targets, ProjectModel project)
     {
         var roots = Roots(project);
         return [.. targets.Order(StringComparer.Ordinal).Select(target => new ManifestTarget(target, [.. result[target].Items.Select(i => Capture(i, roots))]))];
     }
 
-    public List<PluginTargetResult> Replay(IEnumerable<ManifestTarget> targets, ProjectInstance project)
+    public List<PluginTargetResult> Replay(IEnumerable<ManifestTarget> targets, ProjectModel project)
     {
         var roots = Roots(project);
         return [.. targets.Select(target => new PluginTargetResult(target.Name, [.. target.Items.Select(i => Replay(i, roots))], BuildResultCode.Success))];
@@ -57,8 +57,8 @@ internal sealed class TargetResults(string repoRoot)
     private static string Detokenize(string value, (string Path, string Token)[] roots) =>
         ProjectCollection.Escape(roots.Aggregate(value, (current, root) => current.Replace(root.Token, root.Path, StringComparison.Ordinal)));
 
-    private (string Path, string Token)[] Roots(ProjectInstance project) =>
-        project.GetPropertyValue("NuGetPackageRoot") is { Length: > 0 } packages
+    private (string Path, string Token)[] Roots(ProjectModel project) =>
+        project.PackageRoot is { } packages
             ? [repo, (KeyComputer.WithSeparator(packages), "{NuGetPackageRoot}/")]
             : [repo];
 }

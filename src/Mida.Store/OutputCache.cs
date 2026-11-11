@@ -21,7 +21,8 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
     /// Null is a miss. A failure partway leaves restored files behind, which is safe: each is right for this key,
     /// and the miss builds over them.
     /// </summary>
-    public async Task<Manifest?> TryRestoreAsync(string key, CancellationToken cancellationToken)
+    /// <param name="accept">Sees the manifest before any file moves, and throws to refuse it.</param>
+    public async Task<Manifest?> TryRestoreAsync(string key, Action<Manifest>? accept, CancellationToken cancellationToken)
     {
         if (await store.GetAsync(ManifestKey(key), cancellationToken) is not { } json)
         {
@@ -31,6 +32,7 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
         var manifest = JsonSerializer.Deserialize(json, ManifestJson.Default.Manifest)
             ?? throw new InvalidDataException($"Manifest {key} is empty");
         Validate(key, manifest);
+        accept?.Invoke(manifest);
         await Parallel.ForEachAsync(manifest.Files, cancellationToken, (file, token) => new ValueTask(RestoreAsync(file, token)));
         await Parallel.ForEachAsync(manifest.References, cancellationToken, (reference, _) =>
         {
@@ -40,7 +42,32 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
         return manifest;
     }
 
-    /// <summary>A hit skips MSBuild's incremental clean, so a file of another revision would outlive it.</summary>
+    /// <summary>Stores content that is no project output under its hash, which is returned.</summary>
+    public async Task<string> SaveBlobAsync(ReadOnlyMemory<byte> content, CancellationToken cancellationToken)
+    {
+        var hash = Convert.ToHexStringLower(SHA256.HashData(content.Span));
+        await store.TryCreateAsync(BlobKey(hash), content, cancellationToken);
+        return hash;
+    }
+
+    /// <summary>Null when the store has no such blob. One that does not match its hash throws.</summary>
+    public async Task<byte[]?> GetBlobAsync(string hash, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(hash);
+        if (!IsHash(hash))
+        {
+            throw new InvalidDataException($"{hash} is no blob hash");
+        }
+
+        if (await store.GetAsync(BlobKey(hash), cancellationToken) is not { } content)
+        {
+            return null;
+        }
+
+        return Convert.ToHexStringLower(SHA256.HashData(content)) == hash ? content : throw new InvalidDataException($"Blob {hash} is corrupt");
+    }
+
+    /// <summary>Deletes each of the files that the manifest does not list.</summary>
     public void RemoveObsolete(Manifest manifest, IEnumerable<string> outputs)
     {
         ArgumentNullException.ThrowIfNull(manifest);
@@ -82,6 +109,9 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
                 && JsonSerializer.SerializeToUtf8Bytes(other with { BuildTime = buildTime }, ManifestJson.Default.Manifest).AsSpan().SequenceEqual(manifest);
     }
 
+    // A hash becomes a path in the store, so its shape is checked wherever one comes from outside.
+    private static bool IsHash(string hash) => hash.Length == SHA256.HashSizeInBytes * 2 && hash.All(char.IsAsciiHexDigitLower);
+
     private static string BlobKey(string hash) => $"v1/cas/{hash[..2]}/{hash}";
 
     private static string ManifestKey(string key) => $"v1/ac/{key}";
@@ -101,8 +131,7 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
     private void Validate(string key, Manifest manifest)
     {
         var valid = manifest.Files.All(f => f is not null
-                && f.Hash.Length == SHA256.HashSizeInBytes * 2
-                && f.Hash.All(char.IsAsciiHexDigitLower)
+                && IsHash(f.Hash)
                 && f.Mode is null or >= 0 and <= MaxUnixFileMode)
             && manifest.References.All(r => r is not null)
             && manifest.Targets.All(t => t is not null

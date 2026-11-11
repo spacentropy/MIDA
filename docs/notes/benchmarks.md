@@ -154,8 +154,96 @@ Tried and dropped:
 
 What is left: restore is half of an all-hit build, 2.2 of 4.2 s, and nothing caches it. Starting nodes is a fixed cost, so that change matters less at 1024 projects, and none of this was measured there or on Linux.
 
+## How much of a hit is MSBuild, 2026-11-11
+
+Status: measured, nothing built. 128 projects, SDK 10, Debug, mida in Release, a clean clone at another path, build servers shut down first. Two machines: macOS arm64 with 16 processors on APFS, and Linux arm64 in an OrbStack container pinned to 4 cores (`--cpuset-cpus 0-3`) on an ext4 loop image, SDK 10.0.402. Phases are timed inside mida, medians of three runs. Linux runs that stalled on the disk, see below, are left out.
+
+All hits:
+
+| phase | macOS, 16 processors | Linux, 4 cores |
+|---|---|---|
+| start: runtime, Locator, `dotnet --version` | 0.13 s | 0.08 s |
+| restore: the node that runs the target | 0.24 s | 0.17 s |
+| restore: NuGet's process evaluates the 128 projects | 1.45 s | 0.80 s |
+| restore: the rest of NuGet's process | 0.45 s | 0.30 s |
+| graph evaluation in mida | 0.9 s | 0.69 s |
+| prediction | 0.1 s | 0.11 s |
+| graph build: 128 keys, 5,979 files restored | 0.68 s | 0.18 s |
+| total | 4.1 s | 2.4 s |
+| plain `dotnet build` | 6.7 s | 7.2 s |
+
+The other scenarios, total and the graph build in it:
+
+| scenario | macOS | Linux |
+|---|---|---|
+| Fresh, 128 misses | 8.2 s, 4.8 s | 9.1 s, 6.8 s |
+| BodyEdit, 1 miss | 4.8 s, 1.4 s | 3.1 to 3.4 s, 0.8 to 0.95 s |
+| ApiEdit, 23 misses | 6.35 s, 2.9 s | 4.4 s, 2.2 s |
+
+Restore, evaluation and prediction cost the same in every scenario.
+
+- **MSBuild evaluates the 128 projects twice, in two processes.** NuGet's does it inside restore, and mida's does it for the graph. With prediction that is 2.45 of 4.1 s on macOS and 1.6 of 2.4 s on Linux. mida's own work on a hit, the keys and the restored files, is 0.68 s and 0.18 s.
+- Restore is evaluation. On macOS a restore with nothing to do took 1.76 s, against 1.98 s on a clean clone. NuGet's evaluation costs more than mida's, and it also builds its collect targets in each project, which it reports as "128 builds".
+- A second evaluation in one process is hardly cheaper than the first, 0.67 s against 0.77 s on macOS. So hosting NuGet's static graph restore inside mida would save two process starts, 0.3 to 0.4 s, and not the evaluation. Its class is internal, and its targets would run tasks in mida's process.
+- Evaluation alone, as wall time and CPU time by processor count (`DOTNET_PROCESSOR_COUNT`):
+
+  | processors | macOS | Linux |
+  |---|---|---|
+  | 1 | 1.90 s, 1.9 s | 1.27 s, 1.3 s |
+  | 2 | 1.25 s, 2.3 s | 0.87 s, 1.5 s |
+  | 4 | 0.77 s, 2.4 s | 0.48 s, 1.3 s |
+  | 8 | 0.68 s, 3.7 s | |
+  | 16 | 0.70 s, 6.9 s | |
+
+  On macOS it gains nothing past 4 processors, and at 16 three quarters of its CPU time is in the kernel. So macOS numbers overstate what evaluation costs on a Linux runner.
+- **MSBuild's scheduler is not what a hit waits for.** A prototype served every hit from mida's own walk of the graph, dependencies first, before the build session begins, and began no session when all hit. The walk took as long as the graph build had: 0.67 s against 0.68 s on macOS, 0.19 s against 0.19 to 0.31 s on Linux. What it saved is the worker nodes, which start beside the evaluation and are never used: 4.2 to 3.8 s on macOS, 2.45 to 2.3 s on Linux. The keys are the same: a cache filled through the plugin hit 128 of 128 through the walk, with `ProjectGraph.GetTargetLists` and each node's `GlobalProperties` in place of the request's.
+- **What an evaluation asks can be recorded through public API.** `EvaluationContext.Create` takes an `MSBuildFileSystemBase`. Per project it saw about 57 existence checks, 14 of them distinct, and 3 enumerations inside the repo, plus the search for `Directory.Build.*` above it. `ProjectInstance.ImportPaths` lists the imports: 394 distinct files, 258 of them in the repo, which is two restore outputs per project and the two shared props. `EnvironmentVariableReadEventArgs` named 5 variables. Not checked: a property function that reads a file itself, such as `[System.IO.File]::ReadAllText`, should not pass through it.
+- **An all-hit build writes 1.56 GB to restore 46 MB of blobs.** Each of the 28 test projects gets 55 MB of package files in `bin/`, among them TUnit's native coverage binaries for every platform. APFS clones them, ext4 copies them. With hard links in place of copies the graph build took 0.10 s, not 0.23 s, and the build 2.5 s, not 2.7 s (medians of ten, alternating). That was an experiment: a write through such a link would change the blob. A plain `dotnet build` writes the same bytes.
+- On the ext4 image about one run in four lost about a second in a phase that writes. A thread pool of 64 did not change that, and mounting with `commit=60` made it rarer, so it is the disk and not mida. Whether a hosted runner does the same is unknown.
+
+Where MSBuild could come out of a hit, with all-hit times that are sums of the phases above, not measurements, except the first:
+
+| change | macOS | Linux |
+|---|---|---|
+| today | 4.1 s | 2.4 s |
+| Hits before the session, no nodes when all hit (the prototype) | 3.8 s | 2.3 s |
+| and no evaluation in mida: a stored graph, used when every recorded question still has the same answer | about 2.9 s | about 1.5 s |
+| and no restore: its outputs come from the store when the same check passes and the packages are on disk | about 0.8 s | about 0.3 s |
+
+The last row reverses the plan's "Restore: not cached". Restore outputs hold absolute paths, a floating package version would stay where the stored restore resolved it, and `dotnet test --no-build` has not run on such outputs. A miss still needs MSBuild, and with it an evaluation of at least the projects that are not yet decided.
+
 ## Real-world repos
 
-Same scenarios 0 to 3, pointed at a checkout, with one generic partial edit: append a comment line to a `.cs` in a leaf project. That changes the key but not the reference assembly, so it checks early cutoff without knowing the repo. API edits need repo knowledge, so skip them there. Not built yet; the generated sizes come first.
+Built and first run 2026-11-11: `tests/Mida.Tests/RealWorld.cs` (`[Explicit]`) and `.github/workflows/realworld.yml`, which runs only when dispatched. One test per repo, each a pinned tag:
+
+| test | repo | tag | solution | projects | SDK its `global.json` selects |
+|---|---|---|---|---|---|
+| `OrchardCore` | OrchardCMS/OrchardCore, a runnable CMS | `v3.0.1` | `OrchardCore.slnx` | 227 | 10.0.200, `latestMajor`: the newest installed |
+| `Abp` | abpframework/abp, a library | `10.7.1` | `framework/Volo.Abp.slnx` | 270 | 10.0.100, `latestFeature`: SDK 10 |
+
+A test clones the tag once, restores there to fill the package cache, and then builds four clean clones of that clone, each at its own path:
+
+1. `dotnet build` with the two properties `mida build` injects, `ContinuousIntegrationBuild=true` and `IncludeSourceRevisionInInformationalVersion=false`.
+2. The same again at another path. A file that differs between 1 and 2 is not deterministic, so it is listed and not compared.
+3. `mida build` with an empty cache.
+4. `mida build` at a third path with the cache that 3 filled.
+
+It hashes every file under a `bin` directory, with each mention of the checkout's own path replaced by a token. So a file that names its checkout compares equal across checkouts, and a file that a hit restored with the writer's path in it does not. The test fails unless 3 and 4 left the same files with the same hashes as 1. It writes `TestResults/realworld-<test>.md` with the times, the hit and miss counts and the first 50 differences, and all of them in the `.txt` beside it. The plain time is the faster of 1 and 2, and each mida time is a single run.
+
+Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
+
+First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
+
+| repo | dotnet build | mida build, empty cache | mida / dotnet | mida build, filled cache | mida / dotnet | filled cache |
+|---|---|---|---|---|---|---|
+| Abp 10.7.1 | 51.9 s | 68.4 s | 1.32 | 60.0 s | 1.16 | 163 keys, 122 hits, 41 misses |
+| OrchardCore v3.0.1 | 85.8 s | 91.9 s | 1.07 | 95.6 s | 1.11 | 0 keys |
+
+- Abp: 56,397 files under `bin`, of which 450 differ between the two plain builds, by their names mostly test projects' executables and assemblies. Every other file is the same after both mida builds. The two plain builds took 75.2 s and 51.9 s, so one run each says little about the ratio.
+- Abp's 41 misses in an unchanged clone are all "static web assets name this checkout": 33 of the 45 Web and Razor SDK projects and 8 projects that copy their manifests. All 163 keys are the same at both paths. Neither build said so, because that line went to MSBuild's logger as a message and the console logger is quiet. It is now printed as a `mida:` line.
+- OrchardCore gets no keys: every project sets `TargetFrameworks`, with the one value `net10.0`, and a multi-targeted project is not cached. So this run compared three plain builds. Fixed 2026-11-12 ([cache-key.md](cache-key.md)), and the same test then gave 448 keys, two for each project: 88.5 s plain, 119.0 s with an empty cache (1.34), and 76.9 s with a filled one (0.87) on 339 hits and 109 misses. Which projects miss is not looked at yet.
+- OrchardCore's own assemblies differ between two plain builds: 9,089 of 17,957 files, about 250 assemblies and their copies. The assembly holds the full path of its PDB, since `SourceRoot` has the package folder and not the repo, so `PathMap` maps nothing in the checkout. The repo references `Microsoft.SourceLink.GitHub` 10.0.300 as a `GlobalPackageReference` and built on SDK 11. Which of the two leaves the repo's root out is not checked.
+
+Not covered: `obj`, starting the app, and edits. The plan for edits stands: the scenarios 0 to 3, with one generic partial edit: append a comment line to a `.cs` in a leaf project. That changes the key but not the reference assembly, so it checks early cutoff without knowing the repo. API edits need repo knowledge, so skip them there.
 
 Two filters: the repo must build with SDK 10 or 11 (`global.json`), and Arcade repos (aspire, runtime, roslyn, efcore, aspnetcore) bootstrap their own SDK through `eng/build.sh`, so they cost weeks, not an afternoon. `dotnet/runtime` is out for good: native code, custom build. Aspire is possible later with its pinned SDK. Plain-SDK repos of real size to try first, in order: the 49-project repo the plan already names, OrchardCore, semantic-kernel `dotnet/`, OpenTelemetry .NET, Akka.NET. Their SDK pins and project counts are unchecked.

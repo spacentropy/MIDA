@@ -1,19 +1,16 @@
 using System.Globalization;
-using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using Google.Apis.Auth.OAuth2;
-using Microsoft.Build.Evaluation;
-using Microsoft.Build.Execution;
-using Microsoft.Build.Framework;
-using Microsoft.Build.Graph;
-using Microsoft.Build.Logging;
-using Microsoft.Build.Prediction;
-using Microsoft.Build.ProjectCache;
 using Mida.Store;
 
 namespace Mida;
 
-internal sealed class BuildRunner(BuildOptions options, string sdkVersion, string sdkPath)
+/// <param name="sdkProblem">Says why the loaded SDK is the wrong one, or null. Nothing is written before it has answered.</param>
+internal sealed class BuildRunner(BuildOptions options, string sdkVersion, string sdkPath, Task<string?> sdkProblem)
 {
+    // A graph that does not fit sends the search to one more key. Checkouts that differ in this many ways have no stored graph.
+    private const int MaxGraphs = 8;
+
     // Portable PDB paths, and no commit SHA in reference assemblies. See docs/notes/relocation.md
     private static readonly Dictionary<string, string> InjectedProperties = new()
     {
@@ -31,60 +28,144 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
     public int Run()
     {
-        if (!Restore())
-        {
-            return 1;
-        }
+        var checkout = Checkout.Of(options.Solution, sdkPath);
+        var (repoRoot, tokens) = (checkout.RepoRoot, checkout.Tokens);
+        var store = Store();
+        var outputs = new OutputCache(store, repoRoot);
+        var graphs = new GraphStore(store, outputs, checkout);
 
-        using var collection = new ProjectCollection(globalProperties);
-        var deferred = new DeferredPlugin();
-        var parameters = new BuildParameters(collection)
-        {
-            ProjectCacheDescriptor = ProjectCacheDescriptor.FromInstance(deferred, new Dictionary<string, string>()),
-            GlobalProperties = globalProperties,
-            Loggers = Loggers(),
-            MaxNodeCount = Environment.ProcessorCount,
-            EnableNodeReuse = false,
-            // Tasks in this process bind to mida's own copies, such as System.CodeDom 7.0 from Google.Apis.Auth, and fail.
-            DisableInProcNode = true,
-        };
-
-        var manager = BuildManager.DefaultBuildManager;
-        manager.BeginBuild(parameters);
-        GraphBuildResult result;
-        MidaCachePlugin plugin;
-        // Deleted after the nodes exit: it is their working directory, and evaluation fails once it is gone.
-        var nodesDirectory = Directory.CreateTempSubdirectory("mida-nodes-");
+        IBuildHost? host = null;
         try
         {
-            // Meanwhile this process evaluates the graph. Started after it, the nodes cost an all-hit build of 128 projects 0.3 s more.
-            var nodes = Task.Run(() => StartNodes(manager, parameters.MaxNodeCount, nodesDirectory.FullName));
-            var graph = new ProjectGraph(new ProjectGraphEntryPoint(options.Solution, globalProperties), collection);
-            var predictions = new ProjectGraphPredictionExecutor(ProjectPredictors.AllProjectGraphPredictors, ProjectPredictors.AllProjectPredictors)
-                .PredictInputsAndOutputs(graph);
-
-            var repoRoot = RepoRoot.Find(options.Solution);
-            var environment = new[]
+            Phase.Mark("start");
+            GraphModel? graph = null;
+            string? free = null;
+            var restored = false;
+            var source = "Graph from the store, restore skipped";
+            var why = options.Evaluate ? "--evaluate" : "none is stored";
+            try
             {
-                FormattableString.Invariant($"sdk {sdkVersion}"),
-                FormattableString.Invariant($"msbuild {ProjectCollection.Version}"),
-                FormattableString.Invariant($"platform {RuntimeInformation.RuntimeIdentifier}"),
-            };
-            var dotnetRoot = Path.GetFullPath(Path.Combine(sdkPath, "..", ".."));
-            var keys = new KeyComputer(repoRoot, KeyComputer.ExcludedRoots(graph, dotnetRoot), environment);
-            plugin = new MidaCachePlugin(keys, predictions, new OutputCache(Store(), repoRoot), repoRoot, options.ReadOnly);
-            deferred.Plugin = plugin;
-            nodes.GetAwaiter().GetResult();
-            result = manager.BuildRequest(new GraphBuildRequestData(graph, ["Build"]));
+                var key = options.Evaluate ? null : graphs.FirstKey(options.Solution, globalProperties, sdkVersion);
+                for (var searched = 0; key is not null && graph is null && searched < MaxGraphs; searched++)
+                {
+                    if (graphs.GetAsync(key, CancellationToken.None).GetAwaiter().GetResult() is not { } candidate)
+                    {
+                        free = key;
+                        break;
+                    }
+
+                    var changed = graphs.ChangedSource(candidate);
+                    if (changed is null)
+                    {
+                        Phase.Mark("finding a stored graph");
+                        if (sdkProblem.GetAwaiter().GetResult() is { } problem)
+                        {
+                            Console.Error.WriteLine(problem);
+                            return 1;
+                        }
+
+                        Phase.Mark("waiting for the SDK check");
+
+                        // Once a restore has run, its outputs are the ones to keep.
+                        if (restored || !graphs.CanSkipRestore(candidate) || !graphs.MaterializeAsync(candidate, CancellationToken.None).GetAwaiter().GetResult())
+                        {
+                            if (!restored && !(host ??= CreateHost(checkout)).Restore())
+                            {
+                                return 1;
+                            }
+
+                            restored = true;
+                            source = "Graph from the store";
+                            changed = graphs.RestoredSameImports(candidate) ? null : "what restore generates";
+                        }
+
+                        changed ??= graphs.ChangedProbe(candidate);
+                    }
+
+                    if (changed is null)
+                    {
+                        graph = new GraphModel(candidate.Environment, candidate.Projects, tokens);
+                    }
+                    else
+                    {
+                        why = $"{Shown(changed, tokens, repoRoot)} changed";
+                        key = graphs.NextKey(key, candidate);
+                    }
+                }
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // Like any failure of the cache: the build goes on without it.
+                (graph, free, why) = (null, null, $"the stored graph could not be used, {e.Message}");
+            }
+
+            Phase.Mark("restore outputs and the stored graph's questions");
+            Task<string?>? storing = null;
+            if (graph is null)
+            {
+                if (sdkProblem.GetAwaiter().GetResult() is { } problem)
+                {
+                    Console.Error.WriteLine(problem);
+                    return 1;
+                }
+
+                host ??= CreateHost(checkout);
+                if (!restored && !host.Restore())
+                {
+                    return 1;
+                }
+
+                Phase.Mark("restore");
+                var evaluated = host.Evaluate();
+                graph = new GraphModel(evaluated.Environment, evaluated.Projects, tokens);
+                source = $"Graph evaluated: {why}";
+                if (evaluated.NotStorable is { } reason)
+                {
+                    source += $". Not stored: {reason}";
+                }
+                else if (free is not null && !options.ReadOnly)
+                {
+                    // Beside the build: it reads what restore wrote, which no build changes.
+                    storing = Task.Run(() => graphs.TryStoreAsync(free, evaluated, CancellationToken.None));
+                }
+            }
+
+            var cache = new ProjectCache(graph, new KeyComputer(repoRoot, graph.Environment, checkout.Hashes), outputs, repoRoot, options.ReadOnly);
+            var succeeded = cache.WalkAsync().GetAwaiter().GetResult();
+            Phase.Mark("hits");
+            succeeded = succeeded || (host ??= CreateHost(checkout)).Build(cache);
+            Phase.Mark("build");
+
+            // Ends the build session, which waits for the saves and says what they have to say.
+            var ending = host;
+            host = null;
+            ending?.Dispose();
+            Phase.Mark("end of the build session");
+            cache.FlushAsync((warning, text) => Console.WriteLine($"{(warning ? "warning" : "mida")}: {text}")).GetAwaiter().GetResult();
+            if (storing?.GetAwaiter().GetResult() is { } failure)
+            {
+                source += $". Not stored: {failure}";
+            }
+
+            Phase.Mark("storing the graph");
+            Phase.End();
+            Report(cache, source);
+            return succeeded ? 0 : 1;
         }
         finally
         {
-            manager.EndBuild();
-            nodesDirectory.Delete(recursive: true);
+            host?.Dispose();
         }
+    }
 
-        Report(plugin);
-        return result.OverallResult == BuildResultCode.Success ? 0 : 1;
+    // Not inlined, and the only place that names the host: Run must not load MSBuild for a build that needs none.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private IBuildHost CreateHost(Checkout checkout) => MSBuildHost.Create(options, globalProperties, sdkVersion, checkout);
+
+    private static string Shown(string question, PathTokens tokens, string repoRoot)
+    {
+        var path = tokens.DetokenizePath(question);
+        return path.StartsWith(KeyComputer.WithSeparator(repoRoot), KeyComputer.PathComparison) ? Path.GetRelativePath(repoRoot, path) : path;
     }
 
     private IObjectStore Store()
@@ -110,64 +191,11 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             await ((ITokenAccess)await credential.Value).GetAccessTokenForRequestAsync(cancellationToken: token)));
     }
 
-    /// <summary>
-    /// MSBuild starts worker nodes holding a lock, and on Unix their pipe handshake needs a pool thread. Started during
-    /// a burst of hits, every pool thread waits on that lock, so the first misses after many hits stalled for up to a
-    /// minute. Started here, before any hit, the nodes stay up for the graph build. See docs/notes/benchmarks.md
-    /// </summary>
-    private static void StartNodes(BuildManager manager, int count, string directory)
-    {
-        var project = Path.Combine(directory, "nodes.proj");
-        // Distinct global properties make distinct requests, which the scheduler spreads over new nodes.
-        var requests = string.Concat(Enumerable.Range(0, count).Select(i => $"""<Node Include="{project}" AdditionalProperties="Node={i}" />"""));
-        File.WriteAllText(project, $"""
-            <Project>
-              <ItemGroup>{requests}</ItemGroup>
-              <Target Name="Start"><MSBuild Projects="@(Node)" Targets="Started" BuildInParallel="true" /></Target>
-              <Target Name="Started" />
-            </Project>
-            """);
-        manager.BuildRequest(new BuildRequestData(project, new Dictionary<string, string?>(), null, ["Start"], null));
-    }
-
-    private bool Restore()
-    {
-        // Evaluated apart from the build: restore rewrites the imports the build must then see.
-        using var collection = new ProjectCollection();
-        // The same properties as the build: a repo may condition its restore on ContinuousIntegrationBuild.
-        var properties = new Dictionary<string, string?>(globalProperties!, StringComparer.OrdinalIgnoreCase)
-        {
-            ["MSBuildRestoreSessionId"] = Guid.NewGuid().ToString("D"),
-            ["ExcludeRestorePackageImports"] = "true",
-        };
-
-        // NuGet then reads the projects in one process of its own, where the default has every worker node evaluate them:
-        // restore of 128 projects took 2.2 s, not 2.9 s. NuGet calls it experimental, so -p:RestoreUseStaticGraphEvaluation=false turns it off.
-        properties.TryAdd("RestoreUseStaticGraphEvaluation", "true");
-        var request = new BuildRequestData(options.Solution, properties, null, ["Restore"], null, BuildRequestDataFlags.ClearCachesAfterBuild);
-        var parameters = new BuildParameters(collection)
-        {
-            Loggers = Loggers(), MaxNodeCount = Environment.ProcessorCount, EnableNodeReuse = false, DisableInProcNode = true,
-        };
-        return BuildManager.DefaultBuildManager.Build(parameters, request).OverallResult == BuildResultCode.Success;
-    }
-
-    private static List<ILogger> Loggers()
-    {
-        List<ILogger> loggers = [new ConsoleLogger(LoggerVerbosity.Quiet)];
-        if (Environment.GetEnvironmentVariable("MIDA_BINLOG") is { Length: > 0 } path)
-        {
-            loggers.Add(new BinaryLogger { Parameters = path });
-        }
-
-        return loggers;
-    }
-
-    private void Report(MidaCachePlugin plugin)
+    private void Report(ProjectCache cache, string source)
     {
         if (options.PrintKeys)
         {
-            foreach (var (project, key) in plugin.Keys.OrderBy(k => k.Key, StringComparer.Ordinal))
+            foreach (var (project, key) in cache.Keys.OrderBy(k => k.Key, StringComparer.Ordinal))
             {
                 Console.WriteLine($"{key.Value} {project}");
             }
@@ -175,7 +203,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
         if (options.KeyDetailsDirectory is { } directory)
         {
-            foreach (var (project, key) in plugin.Keys)
+            foreach (var (project, key) in cache.Keys)
             {
                 // Mirrors the repo layout: flattening the path would let two projects share one file.
                 var file = Path.Combine(directory, project + ".key");
@@ -184,9 +212,10 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             }
         }
 
-        var seconds = plugin.KeyTime.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture);
-        Console.WriteLine($"{plugin.Keys.Count} keys in {seconds} s, {plugin.Failures} not computable");
-        var saved = plugin.TimeSaved.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture);
-        Console.WriteLine($"{plugin.Hits} hits, {plugin.Misses} misses, {saved} s of project build time saved");
+        Console.WriteLine(source);
+        var seconds = cache.KeyTime.TotalSeconds.ToString("F3", CultureInfo.InvariantCulture);
+        Console.WriteLine($"{cache.Keys.Count} keys in {seconds} s, {cache.Failures} not computable");
+        var saved = cache.TimeSaved.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture);
+        Console.WriteLine($"{cache.Hits} hits, {cache.Misses} misses, {saved} s of project build time saved");
     }
 }

@@ -178,7 +178,7 @@ Plan as written:
 - The GCS store has only met an emulator. Real buckets, Application Default Credentials, Workload Identity Federation from CI, latency and egress cost are untested. A cold runner fetches each blob in its own request, with no retry.
 - The plugin API was experimental until recently and moved namespace between SDK 8 and 10, so a future SDK can break it. The fallback is driving `dotnet build` per project ourselves; keys and the store would not change.
 - Real source generators are untested: the build-time dependency rule was checked with a plain library.
-- Multi-targeted projects get no key, so they rebuild on every run. Their dependents do get keys. A `netstandard2.0` dependency without `ProduceReferenceAssembly` is keyed by its implementation, so it has no early cutoff.
+- Multi-targeted projects get no key, so they rebuild on every run. Their dependents do get keys, and since 2026-11-12 so does a project with one framework in `TargetFrameworks` ([cache-key.md](notes/cache-key.md)). A `netstandard2.0` dependency without `ProduceReferenceAssembly` is keyed by its implementation, so it has no early cutoff.
 - Projects with static web assets are never stored: their manifests name the checkout. On SDK 11 that is every Web SDK project, so an ASP.NET-heavy repo gains little until those manifests get a `{RepoRoot}` token.
 - Unrelated projects sharing one `OutDir` are unsupported: one can silently restore another's older files. A checkout path containing `'` fails the build with `CS8101`. See [local-store.md](notes/local-store.md).
 - Environment variables are not in the key, so one that changes build output gives a false hit.

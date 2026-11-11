@@ -5,11 +5,12 @@ public sealed class BuildOptionsTests
     [Test]
     public async Task ParsesEveryOption()
     {
-        var options = BuildOptions.Parse(["repo.sln", "--print-keys", "--key-details", "out", "--cache", "store"]);
+        var options = BuildOptions.Parse(["repo.sln", "--print-keys", "--key-details", "out", "--cache", "store", "--evaluate"]);
 
         Assert.NotNull(options);
         await Assert.That(options.Solution).IsEqualTo(Path.GetFullPath("repo.sln"));
         await Assert.That(options.PrintKeys).IsTrue();
+        await Assert.That(options.Evaluate).IsTrue();
         await Assert.That(options.KeyDetailsDirectory).IsEqualTo(Path.GetFullPath("out"));
         await Assert.That(options.CacheDirectory).IsEqualTo(Path.GetFullPath("store"));
     }

@@ -31,8 +31,11 @@ public sealed class GeneratedRepoTests : IDisposable
         await Assert.That(Build(Generate("a"))).Contains($"0 hits, {Count} misses");
 
         var clone = Generate("some deeper/path (b)");
-        await Assert.That(Build(clone)).Contains($"{Count} hits, 0 misses");
+        var output = Build(clone);
+        await Assert.That(output).Contains($"{Count} hits, 0 misses");
 
+        // The tests below run on restore outputs that came from the store, not from a restore.
+        await Assert.That(output).Contains("Graph from the store, restore skipped");
         await AssertTestsFail(clone, []);
     }
 

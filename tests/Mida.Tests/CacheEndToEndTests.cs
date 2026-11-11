@@ -91,9 +91,45 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(Build(Checkout("a", multiTarget))).Contains(first);
 
         var clone = Checkout("some deeper/path (b)", multiTarget);
-        await Assert.That(Build(clone)).Contains(second);
+        var output = Build(clone);
+        await Assert.That(output).Contains(second);
 
+        // So the tests run on restore outputs from the store. The multi-targeted library is built on them too.
+        await Assert.That(output).Contains("Graph from the store, restore skipped");
         await AssertTestsPass(clone);
+    }
+
+    // As OrchardCore writes every project. Such a project has an outer node and one inner node, and both are cached.
+    [Test]
+    public async Task OneFrameworkInTargetFrameworksIsCached()
+    {
+        string Single(string relativePath)
+        {
+            var root = Checkout(relativePath);
+            // LibB is a normal reference of LibA, and Gen its build-time one.
+            foreach (var project in new[] { "LibB", "Gen" })
+            {
+                Edit(root, $"{project}/{project}.csproj", "<TargetFramework>net10.0</TargetFramework>", "<TargetFrameworks>net10.0</TargetFrameworks>");
+            }
+
+            return root;
+        }
+
+        await Assert.That(Build(Single("a"))).Contains("0 hits, 7 misses");
+
+        var clone = Single("some deeper/path (b)");
+        await Assert.That(Build(clone)).Contains("7 hits, 0 misses");
+        await AssertTestsPass(clone);
+
+        // A body edit of the build-time reference misses its inner node and all above it: their keys hold that node's key,
+        // which the outer node's key does not. The outer node and LibB's two hit.
+        Edit(clone, "Gen/G.cs", "\"g\"", "\"edited\"");
+        await Assert.That(Build(clone)).Contains("3 hits, 4 misses");
+
+        // A body edit of the library misses its inner node alone and reaches the tests through hits.
+        Edit(clone, "LibB/B.cs", """=> "b";""", """=> "edited";""");
+        await Assert.That(Build(clone)).Contains("6 hits, 1 misses");
+        await AssertTestsFailOn(clone, "edited");
     }
 
     [Test]
@@ -117,6 +153,13 @@ public sealed class CacheEndToEndTests : IDisposable
 
         var (exitCode, testOutput) = Run(clone, packages, "test", "--project", "Tests/Tests.csproj", "--no-build");
         await Assert.That(exitCode).IsEqualTo(0).Because(testOutput);
+
+        // A third machine with the writer's package folder: the graph and the restore outputs come through the bucket as well.
+        var third = Checkout("c");
+        output = Dotnet(third, null, [.. mida, "--cache", Path.Combine(temp, "third cache"), "--cache", bucket]);
+        await Assert.That(output).Contains("Graph from the store, restore skipped");
+        await Assert.That(output).Contains(AllHits);
+        await AssertTestsPass(third);
     }
 
     // A task in mida's process binds to mida's copies of assemblies the SDK also ships, such as System.CodeDom, and fails.
@@ -338,6 +381,44 @@ public sealed class CacheEndToEndTests : IDisposable
         Edit(root, "Lib/C.cs", "class C", "class Edited");
         await Assert.That(Build(root)).Contains("0 hits, 1 misses");
         await Assert.That(File.Exists(readme)).IsTrue();
+
+        // No build wrote it, so it is no output: a hit elsewhere would write this checkout's copy over that one's.
+        await Assert.That(ManifestsNaming("README.md")).IsEqualTo(0);
+    }
+
+    // A local database, a log, a file put there by hand: MSBuild deletes only what it wrote, and so does mida.
+    [Test]
+    public async Task FileTheAppWroteIntoBinSurvivesMissesAndHits()
+    {
+        var root = Checkout("a");
+        Build(root);
+        var database = Path.Combine(root, "Tests", "bin", "Debug", "net10.0", "app.db");
+        File.WriteAllText(database, "rows");
+
+        Edit(root, "Tests/Cover.cs", "public class Cover", "public sealed class Cover");
+        await Assert.That(Build(root)).Contains("4 hits, 1 misses");
+        await Assert.That(File.Exists(database)).IsTrue();
+
+        Edit(root, "Tests/Cover.cs", "public sealed class Cover", "public class Cover");
+        await Assert.That(Build(root)).Contains(AllHits);
+        await Assert.That(File.Exists(database)).IsTrue();
+    }
+
+    // At the repo's root such a project's output directory holds .git, which no hit may write over.
+    [Test]
+    public async Task OutputDirectoryThatHoldsTheProjectIsNotCached()
+    {
+        var root = Path.Combine(temp, "a");
+        Write(root, "App.csproj", Project(string.Empty, "<OutDir>$(MSBuildProjectDirectory)/</OutDir>"));
+        Write(root, "C.cs", "public static class C { }");
+        Write(root, ".git/config", "[core]");
+        Write(root, "Repo.slnx", """<Solution><Project Path="App.csproj" /></Solution>""");
+
+        var output = Build(root);
+
+        await Assert.That(output).Contains("holds the project itself");
+        await Assert.That(output).Contains("0 hits, 0 misses");
+        await Assert.That(Directory.Exists(Path.Combine(temp, "cache", "v1", "ac"))).IsFalse();
     }
 
     [Test]
@@ -369,7 +450,10 @@ public sealed class CacheEndToEndTests : IDisposable
     public async Task StaticWebAssetsAreNotStoredAndOtherProjectsAre()
     {
         var clone = WebRepo("a");
-        await Assert.That(Build(clone)).Contains("0 hits, 2 misses");
+        var first = Build(clone);
+        await Assert.That(first).Contains("0 hits, 2 misses");
+        // Said out loud: on abp 41 of 163 projects missed in a clean clone with nothing to say why.
+        await Assert.That(first).Contains("Web.csproj not stored: static web assets name this checkout");
 
         clone = WebRepo("b");
         await Assert.That(Build(clone)).Contains("1 hits, 1 misses");

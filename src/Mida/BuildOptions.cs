@@ -10,7 +10,8 @@ internal sealed record BuildOptions(
     IReadOnlyDictionary<string, string> Properties,
     string? Bucket = null,
     string BucketPrefix = "",
-    bool ReadOnly = false)
+    bool ReadOnly = false,
+    bool Evaluate = false)
 {
     private const string GcsScheme = "gs://";
 
@@ -38,6 +39,11 @@ internal sealed record BuildOptions(
     };
 
     private static readonly Option<bool> ReadOnlyOption = new("--read-only") { Description = "Store nothing in either store." };
+
+    private static readonly Option<bool> EvaluateOption = new("--evaluate")
+    {
+        Description = "Restore and evaluate every project, even when the store holds a graph that fits. No graph is stored either.",
+    };
 
     private static readonly Option<bool> PrintKeysOption = new("--print-keys") { Description = "Print each project's cache key." };
 
@@ -82,7 +88,8 @@ internal sealed record BuildOptions(
             properties,
             parts?[0],
             prefix,
-            result.GetValue(ReadOnlyOption));
+            result.GetValue(ReadOnlyOption),
+            result.GetValue(EvaluateOption));
     }
 
     private static Command CreateCommand()
@@ -104,7 +111,7 @@ internal sealed record BuildOptions(
 
         var command = new Command("build", "Restore and build a solution through the cache.")
         {
-            SolutionArgument, ConfigurationOption, PropertyOption, CacheOption, ReadOnlyOption, PrintKeysOption, KeyDetailsOption,
+            SolutionArgument, ConfigurationOption, PropertyOption, CacheOption, ReadOnlyOption, EvaluateOption, PrintKeysOption, KeyDetailsOption,
         };
         command.Validators.Add(result =>
         {
