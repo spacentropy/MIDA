@@ -111,6 +111,49 @@ Findings:
   - MSBuild starts worker nodes inside the same lock, and on Unix each pipe handshake read completes on a pool thread. The first miss after many hits needed nodes, so node startup stalled. `mida build` now starts every node before the graph build, through a throwaway project that asks for one request per node. The nodes stay up for the session. An all-hit run pays node startup, about 1 s at 1024 projects. The project's temporary directory must outlive the nodes, because it is their working directory and evaluation fails once it is gone.
   - Rejected: `DOTNET_SYSTEM_NET_SOCKETS_INLINE_COMPLETIONS=1` fixed the stall but leaked to child processes, and the Roslyn compiler server deadlocked on it. Inline, a continuation did a synchronous read of its own pipe. A higher thread-pool minimum (`DOTNET_ThreadPool_ForceMinWorkerThreads` 128 to 1100) made runs slower, up to 156 s.
 
+## Where the time goes, 2026-11-11
+
+128 projects, macOS arm64 with 16 processors, SDK 10.0.404, Release. Phases timed inside the mida process, medians of five runs:
+
+| phase | all hits | all misses |
+|---|---|---|
+| restore | 2.96 s | 2.84 s |
+| graph evaluation | 0.96 s | 0.95 s |
+| starting the worker nodes | 0.57 s | 0.55 s |
+| graph build | 0.56 s | 4.67 s |
+| the rest | 0.27 s | 0.28 s |
+| total | 5.32 s | 9.29 s |
+
+So in an all-hit build mida's own code is the 0.56 s of the graph build, and the rest is MSBuild and NuGet. A trace of the mida process (`dotnet-trace`, sampled thread time) splits its busy thread time into graph evaluation 38%, restoring hits 20% and starting nodes 15%. Half of the hits' share is `clonefile`. More than half of the evaluation is MSBuild's `FileUtilities.MaybeAdjustFilePath`, which asks the OS for the current directory on every relative value it checks: `getcwd` alone is 8 of the 17 s of evaluation thread time. That is MSBuild's code on macOS, and Linux was not traced.
+
+Three changes came out of it, each measured against the one before in alternating runs:
+
+| change | what it shortens | all hits | all misses |
+|---|---|---|---|
+| Restore with NuGet's static graph evaluation | restore, 2.9 to 2.2 s | 5.3 to 4.65 s | 9.3 to 8.6 s |
+| No background garbage collector in mida | graph evaluation, 0.98 to 0.80 s | 4.42 to 4.35 s | 8.71 to 8.54 s |
+| Worker nodes start while the graph is evaluated | the wait for nodes, 0.5 to 0.06 s | 4.54 to 4.22 s | 8.58 to 8.38 s |
+
+- With the default restore every worker node evaluates projects, and mida has one cold node per processor, because it runs none in its own process. With static graph evaluation NuGet reads the projects in one process. NuGet calls the mode experimental and says a few repos restore differently with it, so `-p:RestoreUseStaticGraphEvaluation=false` turns it off. On the generated repo both modes gave the same keys.
+- The nodes start on another thread once the build session begins, which is now before the graph exists. The plugin MSBuild takes at that moment is a `DeferredPlugin` that answers "not applicable" until the real one is set. The nodes are still all up before the first hit, which is what the stall fix above needs. Evaluation slows from 0.8 to 1.0 s beside the starting nodes, so the net is 0.3 s.
+
+The benchmark at 128 projects, old build and new one back to back:
+
+| scenario | mida build before | after | mida / dotnet before | after |
+|---|---|---|---|---|
+| Fresh | 9.5 s | 8.7 s | 1.43 | 1.31 |
+| Unchanged | 5.1 s | 4.1 s | 0.78 | 0.61 |
+| BodyEdit | 5.8 s | 4.9 s | 0.83 | 0.77 |
+| ApiEdit | 7.5 s | 6.7 s | 1.16 | 1.04 |
+
+Tried and dropped:
+
+- Server GC shortens graph evaluation further, 0.98 to 0.70 s, but the process grows from 260 MB to about 600 MB.
+- `TieredPGO` off and `TieredCompilation` off made no difference to the total.
+- `ProjectInstance.TranslateEntireState`, which sends mida's evaluated project to the node in place of a second evaluation there, made no difference to a fresh build.
+
+What is left: restore is half of an all-hit build, 2.2 of 4.2 s, and nothing caches it. Starting nodes is a fixed cost, so that change matters less at 1024 projects, and none of this was measured there or on Linux.
+
 ## Real-world repos
 
 Same scenarios 0 to 3, pointed at a checkout, with one generic partial edit: append a comment line to a `.cs` in a leaf project. That changes the key but not the reference assembly, so it checks early cutoff without knowing the repo. API edits need repo knowledge, so skip them there. Not built yet; the generated sizes come first.

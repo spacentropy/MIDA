@@ -28,6 +28,8 @@ It restores, then builds, and ends with a summary such as `47 hits, 2 misses, 31
 
 `mida build` always sets `ContinuousIntegrationBuild=true` and `IncludeSourceRevisionInInformationalVersion=false`, which make outputs the same at every checkout path and keep the commit SHA out of reference assemblies. A `-p` for either wins, at the cost of hits.
 
+It restores with NuGet's static graph evaluation, which is faster and which NuGet calls experimental. `-p:RestoreUseStaticGraphEvaluation=false` restores the default way.
+
 ## CI
 
 - Run every later step with `--no-build` and the same configuration, such as `dotnet test -c Release --no-build`. A step without it rebuilds everything.

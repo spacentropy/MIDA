@@ -37,24 +37,10 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         }
 
         using var collection = new ProjectCollection(globalProperties);
-        var graph = new ProjectGraph(new ProjectGraphEntryPoint(options.Solution, globalProperties), collection);
-        var predictions = new ProjectGraphPredictionExecutor(ProjectPredictors.AllProjectGraphPredictors, ProjectPredictors.AllProjectPredictors)
-            .PredictInputsAndOutputs(graph);
-
-        var repoRoot = RepoRoot.Find(options.Solution);
-        var environment = new[]
-        {
-            FormattableString.Invariant($"sdk {sdkVersion}"),
-            FormattableString.Invariant($"msbuild {ProjectCollection.Version}"),
-            FormattableString.Invariant($"platform {RuntimeInformation.RuntimeIdentifier}"),
-        };
-        var dotnetRoot = Path.GetFullPath(Path.Combine(sdkPath, "..", ".."));
-        var keys = new KeyComputer(repoRoot, KeyComputer.ExcludedRoots(graph, dotnetRoot), environment);
-        var plugin = new MidaCachePlugin(keys, predictions, new OutputCache(Store(), repoRoot), repoRoot, options.ReadOnly);
-
+        var deferred = new DeferredPlugin();
         var parameters = new BuildParameters(collection)
         {
-            ProjectCacheDescriptor = ProjectCacheDescriptor.FromInstance(plugin, new Dictionary<string, string>()),
+            ProjectCacheDescriptor = ProjectCacheDescriptor.FromInstance(deferred, new Dictionary<string, string>()),
             GlobalProperties = globalProperties,
             Loggers = Loggers(),
             MaxNodeCount = Environment.ProcessorCount,
@@ -66,11 +52,29 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         var manager = BuildManager.DefaultBuildManager;
         manager.BeginBuild(parameters);
         GraphBuildResult result;
+        MidaCachePlugin plugin;
         // Deleted after the nodes exit: it is their working directory, and evaluation fails once it is gone.
         var nodesDirectory = Directory.CreateTempSubdirectory("mida-nodes-");
         try
         {
-            StartNodes(manager, parameters.MaxNodeCount, nodesDirectory.FullName);
+            // Meanwhile this process evaluates the graph. Started after it, the nodes cost an all-hit build of 128 projects 0.3 s more.
+            var nodes = Task.Run(() => StartNodes(manager, parameters.MaxNodeCount, nodesDirectory.FullName));
+            var graph = new ProjectGraph(new ProjectGraphEntryPoint(options.Solution, globalProperties), collection);
+            var predictions = new ProjectGraphPredictionExecutor(ProjectPredictors.AllProjectGraphPredictors, ProjectPredictors.AllProjectPredictors)
+                .PredictInputsAndOutputs(graph);
+
+            var repoRoot = RepoRoot.Find(options.Solution);
+            var environment = new[]
+            {
+                FormattableString.Invariant($"sdk {sdkVersion}"),
+                FormattableString.Invariant($"msbuild {ProjectCollection.Version}"),
+                FormattableString.Invariant($"platform {RuntimeInformation.RuntimeIdentifier}"),
+            };
+            var dotnetRoot = Path.GetFullPath(Path.Combine(sdkPath, "..", ".."));
+            var keys = new KeyComputer(repoRoot, KeyComputer.ExcludedRoots(graph, dotnetRoot), environment);
+            plugin = new MidaCachePlugin(keys, predictions, new OutputCache(Store(), repoRoot), repoRoot, options.ReadOnly);
+            deferred.Plugin = plugin;
+            nodes.GetAwaiter().GetResult();
             result = manager.BuildRequest(new GraphBuildRequestData(graph, ["Build"]));
         }
         finally
@@ -131,11 +135,15 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         // Evaluated apart from the build: restore rewrites the imports the build must then see.
         using var collection = new ProjectCollection();
         // The same properties as the build: a repo may condition its restore on ContinuousIntegrationBuild.
-        var properties = new Dictionary<string, string?>(globalProperties!)
+        var properties = new Dictionary<string, string?>(globalProperties!, StringComparer.OrdinalIgnoreCase)
         {
             ["MSBuildRestoreSessionId"] = Guid.NewGuid().ToString("D"),
             ["ExcludeRestorePackageImports"] = "true",
         };
+
+        // NuGet then reads the projects in one process of its own, where the default has every worker node evaluate them:
+        // restore of 128 projects took 2.2 s, not 2.9 s. NuGet calls it experimental, so -p:RestoreUseStaticGraphEvaluation=false turns it off.
+        properties.TryAdd("RestoreUseStaticGraphEvaluation", "true");
         var request = new BuildRequestData(options.Solution, properties, null, ["Restore"], null, BuildRequestDataFlags.ClearCachesAfterBuild);
         var parameters = new BuildParameters(collection)
         {
