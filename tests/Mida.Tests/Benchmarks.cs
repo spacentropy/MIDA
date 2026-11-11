@@ -19,6 +19,8 @@ public sealed class Benchmarks : IDisposable
     // The fastest of these counts: between single runs of one commit the ratio moved by 7%.
     private const int Repeats = 3;
 
+    private const string UnknownCpu = "unknown CPU";
+
     private static readonly int Count = int.Parse(Environment.GetEnvironmentVariable("MIDA_BENCH_COUNT") ?? "128", CultureInfo.InvariantCulture);
 
     private readonly string temp = Temp();
@@ -109,13 +111,22 @@ public sealed class Benchmarks : IDisposable
         }
 
         var ratio = seconds / plain;
+        var cpu = Cpu();
         var path = Path.Combine(TestContext.ResultsDirectory, $"bench-{scenario}-{Count}");
 
         // CI puts the last run's files here. Unset, the directory is one that holds none.
-        var previous = Path.Combine(Environment.GetEnvironmentVariable("MIDA_BENCH_PREVIOUS") ?? temp, Path.GetFileName(path) + ".ratio");
-        var change = File.Exists(previous) && double.Parse(await File.ReadAllTextAsync(previous), CultureInfo.InvariantCulture) is var last
-            ? $"{last:F2} ({(ratio - last) / last:+0%;-0%})"
-            : "none";
+        var previous = Path.Combine(Environment.GetEnvironmentVariable("MIDA_BENCH_PREVIOUS") ?? temp, Path.GetFileName(path));
+        var change = "none";
+        if (File.Exists(previous + ".ratio"))
+        {
+            var last = double.Parse(await File.ReadAllTextAsync(previous + ".ratio"), CultureInfo.InvariantCulture);
+
+            // A ratio from other hardware says nothing about the commit, so that hardware is named: on another CPU model
+            // with a disk half as fast, ApiEdit moved by 18% with mida unchanged.
+            var lastCpu = File.Exists(previous + ".cpu") ? await File.ReadAllTextAsync(previous + ".cpu") : UnknownCpu;
+            change = $"{last:F2} ({(ratio - last) / last:+0%;-0%}){(lastCpu == cpu ? string.Empty : $", on {lastCpu}")}";
+        }
+
         var megabytes = Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1_000_000;
         var result = string.Join("; ", output.Split('\n').Where(l => l.Contains(" keys in ", StringComparison.Ordinal) || l.Contains(" hits, ", StringComparison.Ordinal)).Select(l => l.Trim()));
         var table = $"""
@@ -123,7 +134,7 @@ public sealed class Benchmarks : IDisposable
             |---|---|---|---|---|---|---|
             | {scenario} | {Count} | {plain:F1} s | {seconds:F1} s | {ratio:F2} | {change} | {result} |
 
-            Fastest of {Repeats}, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+            Fastest of {Repeats}, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors, {cpu}
 
             | run | dotnet build | machine meanwhile | mida build | machine meanwhile |
             |---|---|---|---|---|
@@ -132,6 +143,7 @@ public sealed class Benchmarks : IDisposable
             """;
         await File.WriteAllTextAsync(path + ".md", table);
         await File.WriteAllTextAsync(path + ".ratio", ratio.ToString("F3", CultureInfo.InvariantCulture));
+        await File.WriteAllTextAsync(path + ".cpu", cpu);
         TestContext.Current!.Output.WriteLine($"{path}.md\n{table}");
     }
 
@@ -167,6 +179,11 @@ public sealed class Benchmarks : IDisposable
     private static long[] CpuTicks() => File.Exists("/proc/stat")
         ? [.. File.ReadLines("/proc/stat").First().Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).Take(8).Select(t => long.Parse(t, CultureInfo.InvariantCulture))]
         : [];
+
+    // Only Linux on x64 names the model there.
+    private static string Cpu() =>
+        (File.Exists("/proc/cpuinfo") ? File.ReadLines("/proc/cpuinfo").FirstOrDefault(l => l.StartsWith("model name", StringComparison.Ordinal)) : null)
+            ?.Split(':', 2)[1].Trim() ?? UnknownCpu;
 
     private static void Copy(string source, string destination)
     {

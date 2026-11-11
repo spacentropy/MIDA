@@ -39,11 +39,11 @@ Run: `MIDA_BENCH_COUNT=1024 dotnet test --project tests/Mida.Tests -f net10.0 --
 
 ## In CI
 
-`.github/workflows/bench.yml` runs the four scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster.
+`.github/workflows/bench.yml` runs the four scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster, as long as both runs had the same CPU model. Each result stores its model in `bench-<scenario>-<count>.cpu`. When the two differ, the column names the other model, and the difference says nothing about the commit.
 
 Each summary also says what the runner is: CPU model, memory, disk and how fast that disk writes and reads. For each of the three repetitions it says what the whole machine did meanwhile: CPU busy, iowait and steal, and the memory left.
 
-First numbers, 2026-11-10, Ubuntu 24.04 x64 with 4 processors, two runs of commit `6a619fd`:
+First numbers, 2026-11-10, Ubuntu 24.04 x64 with 4 processors, two runs of commit `6a619fd`, from before the summary said what the runner is:
 
 | scenario | dotnet build | mida build | mida / dotnet | the same commit again |
 |---|---|---|---|---|
@@ -52,7 +52,24 @@ First numbers, 2026-11-10, Ubuntu 24.04 x64 with 4 processors, two runs of commi
 | BodyEdit | 139.5 s | 108.0 s | 0.77 | 0.72 |
 | ApiEdit | 116.4 s | 87.8 s | 0.75 | 0.71 |
 
-So `Unchanged` compares between runs, and the edits need a difference above about 10%. `Fresh` does not compare yet: its `mida build` took 143.7 s in two runs and 113.1 s in one, against a plain build of 114 to 118 s in all three. The cause is not known, which is what the machine readout is for.
+`Unchanged` held, the edits moved by 6 to 8%, and `Fresh` moved by 23%: its `mida build` took 143.7 s in two runs and 113.1 s in one, against a plain build of 114 to 118 s in all three.
+
+The next run, of commit `b4c2bc5`, has the readout. Since `6a619fd` only the benchmark changed, not mida:
+
+| scenario | CPU | disk writes | dotnet build | mida build | mida / dotnet | the run before |
+|---|---|---|---|---|---|---|
+| Fresh | AMD EPYC 7763 | 405 MB/s | 117.2 s | 146.9 s | 1.25 | 1.22 |
+| Unchanged | AMD EPYC 7763 | 412 MB/s | 117.7 s | 84.4 s | 0.72 | 0.71 |
+| BodyEdit | AMD EPYC 7763 | 399 MB/s | 120.6 s | 85.8 s | 0.71 | 0.72 |
+| ApiEdit | AMD EPYC 9V45 | 186 MB/s | 112.1 s | 94.3 s | 0.84 | 0.71 |
+
+The three repetitions in one job agree: `Fresh` took 146.9, 147.0 and 151.7 s, `Unchanged` 84.4, 84.7 and 84.4 s. The differences are between runners:
+
+- The three jobs on the EPYC 7763 repeated the run before within 3%. The job on the EPYC 9V45, whose disk writes half as fast, moved by 18%.
+- The ratio does not cancel the hardware out, because the two builds load it differently. On the EPYC 7763 a plain build kept the processors 88% busy with 6% iowait, and a fresh `mida build` 95% busy with none. A run that hits kept them 60 to 63% busy with 28 to 31% iowait. On the slower disk, with 74 misses among the hits, that was 46 to 52% busy with 42 to 49% iowait, and the plain build had 28 to 35% iowait too. iowait only counts a processor with nothing else to do, so the 6% is a floor.
+- So `Fresh` is 1.25 on the EPYC 7763. Earlier runs gave 1.24, 0.99 and 1.22, and what those ran on is not recorded, so 0.99 is the odd one but not explained.
+- A fresh `mida build` used about 30% more CPU time than the plain build beside it: 95% of four processors for 147 s against 88% for 117 to 123 s. Which part costs that is not measured.
+- A run of hits waits on the disk. ext4 does not clone, so every hit is a plain copy, and a built checkout of this size is 12 to 14 GB: six fit in the 85 GB the runner has free and seven did not.
 
 A job takes 14 to 18 minutes. A hosted runner's disk does not hold seven built checkouts of this size, so each is deleted once it is timed.
 
