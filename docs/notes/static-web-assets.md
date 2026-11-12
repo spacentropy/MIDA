@@ -9,7 +9,7 @@ Until this, a project whose static web asset manifests named the checkout was ne
 | repo | keys | misses in an unchanged clean clone, before |
 |---|---|---|
 | Abp 10.7.1, framework | 163 | 41, all of them this: 33 Web and Razor SDK projects and 8 that copy their manifests |
-| OrchardCore v3.0.1 | 448 | 109, not looked at, most likely this |
+| OrchardCore v3.0.1 | 448 | 109, all of them this: 0 after |
 
 On SDK 11 every Web SDK project has framework assets, so every one of them missed.
 
@@ -71,9 +71,10 @@ Mutations, each failing only its own tests: no expansion on restore fails every 
 
 `RealWorld/Abp` in the OrbStack container, four pinned cores, ext4, SDK 10.0.402 and 11.0.100: a clean clone at another path went from 122 hits and 41 misses to 163 hits and 0 misses, and from 1.16 to 0.75 of a plain build's time. Its `bin/` comparison passed. Numbers in [benchmarks.md](benchmarks.md#real-world-repos). The writers' times did not cause "different outputs" there, since each key was written once.
 
+On GitHub Actions, `ubuntu-latest` x64, both repos passed with 0 misses in the filled cache: Abp 163 of 163 hits at 0.80 of a plain build, OrchardCore 448 of 448 at 0.09, from 109 misses before.
+
 ## Not done
 
-- `RealWorld/OrchardCore` was not run. Its 109 misses are expected to be mostly this, which is not checked.
 - Windows has never been run. The doubled-backslash spelling is in `PathTokens` and the unit tests build their JSON with the serializer, so they cover it on Windows, but no build has.
 - A checkout whose roots are not `PathTokens.Plain`, holding a character such as `&`, `'` or `%`, does not expand these files, and a project with them misses with a warning. Only `"`, `\` and control characters would break the JSON, so this is stricter than it needs to be.
 - A path in these manifests that no longer exists at save time is not caught by the net.
