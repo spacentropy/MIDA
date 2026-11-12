@@ -28,11 +28,10 @@ internal sealed class PathTokens
         {
             var trimmed = Path.TrimEndingDirectorySeparator(path);
             all.Add((trimmed, $"{{{name}}}"));
-            if (Path.DirectorySeparatorChar == '\\')
-            {
-                // JSON doubles each backslash, so a Windows path has a second spelling there.
-                all.Add((trimmed.Replace("\\", "\\\\", StringComparison.Ordinal), $"{{{name}:json}}"));
-            }
+            // JSON doubles each backslash, so a Windows path has a second spelling there. Some writers escape each slash.
+            all.Add(Path.DirectorySeparatorChar == '\\'
+                ? (trimmed.Replace("\\", "\\\\", StringComparison.Ordinal), $"{{{name}:json}}")
+                : (trimmed.Replace("/", "\\/", StringComparison.Ordinal), $"{{{name}:json}}"));
         }
 
         // A root of one character, such as /, is in every path.

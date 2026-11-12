@@ -101,7 +101,7 @@ Changes from the plan:
 - A new satellite assembly needed a `dependency-files` key line.
 - `*.CoreCompileInputs.cache` and `*.GeneratedMSBuildEditorConfig.editorconfig` are left out, so manifests are byte-identical across checkouts of one commit.
 - After review: a hit deletes outputs its manifest does not list and a miss clears them first, manifests are validated before any file moves, and read-only files are replaceable on Windows.
-- A project with static web assets is not stored, because its manifests name the checkout. On SDK 11 that is every Web SDK project. The 49-project repo has five, so measure what that costs when it runs, and relocate these manifests if the cost is real.
+- A project with static web assets is not stored, because its manifests name the checkout. On SDK 11 that is every Web SDK project. The 49-project repo has five, so measure what that costs when it runs, and relocate these manifests if the cost is real. Done 2026-11-12, after Abp lost 41 of 163 hits to it: [static-web-assets.md](notes/static-web-assets.md).
 
 The test suite also moved from xUnit v3 to TUnit, and the stale-copy mutation checks were repeated on it.
 
@@ -179,7 +179,7 @@ Plan as written:
 - The plugin API was experimental until recently and moved namespace between SDK 8 and 10, so a future SDK can break it. The fallback is driving `dotnet build` per project ourselves; keys and the store would not change.
 - Real source generators are untested: the build-time dependency rule was checked with a plain library.
 - Multi-targeted projects get no key, so they rebuild on every run. Their dependents do get keys, and since 2026-11-12 so does a project with one framework in `TargetFrameworks` ([cache-key.md](notes/cache-key.md)). A `netstandard2.0` dependency without `ProduceReferenceAssembly` is keyed by its implementation, so it has no early cutoff.
-- Projects with static web assets are never stored: their manifests name the checkout. On SDK 11 that is every Web SDK project, so an ASP.NET-heavy repo gains little until those manifests get a `{RepoRoot}` token.
+- Static web asset manifests are stored with tokens for the checkout's roots since 2026-11-12 ([static-web-assets.md](notes/static-web-assets.md)). A project with an asset outside those roots is still never stored, and Windows has not been run.
 - Unrelated projects sharing one `OutDir` are unsupported: one can silently restore another's older files. A checkout path containing `'` fails the build with `CS8101`. See [local-store.md](notes/local-store.md).
 - Environment variables are not in the key, so one that changes build output gives a false hit.
 - Prediction misses undeclared inputs, so the first keys are slightly unsound. Later mitigation: an extra-inputs glob setting and an audit mode that rebuilds a sample of hits and compares outputs.

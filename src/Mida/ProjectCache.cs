@@ -243,12 +243,6 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
         try
         {
             var outputs = ProjectOutputs.Scan(project);
-            if (ProjectOutputs.HoldCheckoutPaths(outputs, repoRoot))
-            {
-                messages.Enqueue((false, $"Outputs of {project.Path} not stored: static web assets name this checkout"));
-                return;
-            }
-
             var copies = computer.DependencyCopies(project, outputs);
             var stored = await cache.SaveAsync(
                 key.Value,

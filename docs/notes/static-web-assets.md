@@ -1,147 +1,79 @@
-# Plan: cache projects with static web assets
+# Cache projects with static web assets
 
-Status: plan, written 2026-11-12. Nothing here is built. It is written for whoever implements it, with no other context than this repo.
+Status: built 2026-11-12, from a plan written the same day. Code: `ProjectOutputs.Relocation` and `IsTokenized` (`src/Mida/ProjectOutputs.cs`), `Relocation` and `ManifestFile.Tokenized` (`src/Mida.Store/Manifest.cs`), the `dependency-assets` key line (`src/Mida/KeyComputer.cs`).
 
 ## Why
 
-A project whose static web asset manifests name the checkout is never stored (`ProjectOutputs.HoldCheckoutPaths`, [local-store.md](local-store.md)). It always misses, and so does every project that gets a copy of such a manifest in its `bin/`. On real repos that is a large share of the graph ([benchmarks.md](benchmarks.md#real-world-repos)):
+Until this, a project whose static web asset manifests named the checkout was never stored. It always missed, and so did every project that got a copy of such a manifest in its `bin/`. On real repos that was a large share of the graph ([benchmarks.md](benchmarks.md#real-world-repos)):
 
-| repo | keys | misses in an unchanged clean clone |
+| repo | keys | misses in an unchanged clean clone, before |
 |---|---|---|
 | Abp 10.7.1, framework | 163 | 41, all of them this: 33 Web and Razor SDK projects and 8 that copy their manifests |
-| OrchardCore v3.0.1 | 448 | 109, not yet looked at, most likely this |
+| OrchardCore v3.0.1 | 448 | 109, not looked at, most likely this |
 
-On SDK 11 every Web SDK project has framework assets, so every one of them misses.
+On SDK 11 every Web SDK project has framework assets, so every one of them missed.
 
-## Goal
+## What was built
 
-A clean clone at another path, on another machine, hits for these projects, and the app then serves its static files from the clone. A changed asset is never served stale.
+**Stored blobs hold tokens, and a restore expands them.** A save replaces each root in these files with its token before hashing and storing, and marks the file in the manifest (`"tokenized": true`). A restore verifies the blob's hash, which is of the stored bytes, and then puts this checkout's roots back. No other file is ever rewritten. The roots and tokens are `PathTokens`' (`src/Mida/PathTokens.cs`): repo, package folder, .NET install and user profile. `Mida.Store` knows nothing of MSBuild: `OutputCache` takes a `Relocation`, a pair of functions, from `BuildRunner`. A manifest written before the mark reads as unmarked, and the mark is left out of the JSON when false, so other entries' bytes did not change.
 
-Done when:
-
-1. `StaticWebAssetsAreNotStoredAndOtherProjectsAre` is replaced by tests that pass on `net10.0` (SDK 10) and `net11.0` (SDK 11): see [Tests](#tests).
-2. `RealWorld/Abp` in the OrbStack container reports no miss with the reason "static web assets", and its output comparison still passes.
-3. The docs listed under [Docs](#docs) say what is true.
-
-## What the files are
-
-Measured 2026-11-12 on a three-project repo (a Razor class library `Rcl` with `wwwroot/a.css`, a Web SDK host `Web` with `wwwroot/site.js` that references it, and a plain project `Tests` that references `Web`), built at two paths with `-p:ContinuousIntegrationBuild=true` on SDK 10.0.404 and 11.0.100. Reproduce it before relying on it.
-
-Files of cached kinds that hold the checkout's absolute path:
+The files are chosen by name, never by content, since a PDB holds the root too:
 
 | file | where | who reads it |
 |---|---|---|
 | `<Project>.staticwebassets.runtime.json` | `bin/`, and copied into the `bin/` of every project above | the app at startup in Development, and `WebApplicationFactory` |
-| `staticwebassets.build.json` | `obj/` | builds of dependents, `dotnet publish --no-build`, incremental builds |
+| `staticwebassets.build.json` | `obj/` | builds of dependents, `dotnet publish --no-build` |
 | `staticwebassets.development.json` | `obj/` | the source of the runtime manifest |
 | `staticwebassets.pack.json` | `obj/`, Razor class libraries | `dotnet pack --no-build` |
-| `rbcswa.dswa.cache.json`, `rpswa.dswa.cache.json` and other `*.dswa.cache.json` | `obj/` | incremental builds only, as far as seen |
+| `MvcTestingAppManifest.json` | `obj/` and `bin/` of a project that references `Microsoft.AspNetCore.Mvc.Testing` | `WebApplicationFactory`, for the host's content root |
 
-The path is a plain JSON string: `ContentRoots`, `Identity`, `ContentRoot`, `RelatedAsset`, `OriginalItemSpec` and the like. On Windows JSON escapes each backslash, which `HoldCheckoutPaths` already allows for.
+`MvcTestingAppManifest.json` was not in the plan. The reproduction found it: it maps each referenced host to its absolute project directory, and `WebApplicationFactory` uses that path without checking it exists. It was stored as it was before this change whenever the host had no static web assets, so such a test project could hit and run against the writer's checkout. Its writer escapes each slash (`\/`), so `PathTokens` now has that spelling on Unix, as it has the doubled backslash on Windows.
 
-With the path replaced by a token, these are the same in both checkouts:
+**The safety net.** Every `*staticwebassets*.json` and every file above is checked after tokenizing. A JSON string that is a fully qualified path that exists means something no token covers, such as an asset linked in from outside the repo. Then the project is not stored, and the build warns: `Outputs of <project> not stored: <file> names <path>, which no token covers`. "Exists" is there because base64 hashes in these files can start with a slash. `/` alone is a base path. The rule stays: the store never holds a writer's path.
 
-- SDK 10: every `*.staticwebassets.runtime.json`, `staticwebassets.development.json` and `staticwebassets.pack.json`. The compressed assets in `obj/.../compressed/` have the same names.
-- So a token is enough for what the app reads on SDK 10.
+**The incremental caches are not stored**: `*.dswa.cache.json`, `staticwebassets.build.json.cache` and `swae.build.ex.cache` differ per checkout and only an incremental build reads them. `dotnet test --no-build` and `dotnet publish --no-build` work on a hit without them.
 
-What still differs, and is not the path:
+**A key line for a dependency's assets.** A host's manifests hold the fingerprint, integrity and compressed name of each asset of its dependencies. A body edit of a library's `wwwroot/a.css`, or of its scoped CSS, changes neither its reference assembly nor its file names, so the host hit with the old integrity: the test below failed exactly so before the line. Now every transitive dependency with a `*.staticwebassets.endpoints.json` in its `bin/` adds `dependency-assets <name> <hash>`, the hash of those files without their `Last-Modified` headers, which are the sources' times. The plan suggested the build manifest in `obj/` instead. The endpoints manifest names no path, and it is already among the dependency's outputs the key reads. A C# body edit of a library still stops at it. The cost: a project above a host, such as its test project, also misses on an asset edit.
 
-- **Times.** `staticwebassets.build.json` holds each asset's `LastWriteTime`, and `<Project>.staticwebassets.endpoints.json` in `bin/` holds it as a `Last-Modified` response header. They are the modification times of the source files, so they differ in every clone. `staticwebassets.build.json` also has a `Hash` over its content, which differs with them.
-- **`*.dswa.cache.json`** keys its entries by a hash that differs per checkout.
-- **SDK 11 only: a key pair made by every build.** `obj/.../HotReload/browser-tools-key.private.json` and `.public.json` are new on every build. The public key is written into the generated asset `_framework/Microsoft.NET.Sdk.BlazorWeb.HotReload.BrowserTools.Config.js`, so that asset's fingerprint, integrity and compressed file name differ between two builds of the same source, and with them the runtime manifest, `staticwebassets.build.json` and the endpoints manifest. This is the build not being deterministic, with or without mida.
+**Copies in dependents** needed no new code. A test project's copy of `Web.staticwebassets.runtime.json` is byte-identical to the host's, both expanded, so it is a `ManifestReference` taken from the host on every hit.
 
-Not seen in this sample, and to check on Abp, which uses Razor class libraries from packages: content roots under the NuGet package folder or under the dotnet root. `HoldCheckoutPaths` looks only for the repo root, so a project whose manifests name only the package folder is stored today with the writer's package folder in it. That is a bug on another machine, whatever else this plan does.
-
-## Design
-
-**Stored blobs hold tokens, and a restore expands them.** For the files above, a save replaces each absolute root with its token before hashing and storing, and a restore writes the blob and then puts this checkout's roots back. The manifest marks such a file, so a restore knows to expand it and nothing else is ever rewritten.
-
-- Use `PathTokens` (`src/Mida/PathTokens.cs`) for the roots: repo root, package folder, dotnet root, user profile. `TargetResults` already does the same for replayed items with `{RepoRoot}` and `{NuGetPackageRoot}`. One set of tokens for both would be better than two.
-- `Mida.Store` knows nothing of MSBuild and must stay that way. `OutputCache` should take the rewrite from its caller, for example as a pair of functions given a relative path and the bytes, and should only know that a `ManifestFile` is marked.
-- `ManifestFile` gets an optional property for the mark. The JSON options reject missing required properties, so give it a default, as `Manifest.BuildTime` has, and check that a manifest written before this change still reads.
-- `RestoreAsync` verifies a blob by hashing the restored file. Verify first, expand after: the hash is of the stored bytes.
-- Choose the files by name, in one place next to `ProjectOutputs.IsCached`: `*.staticwebassets.runtime.json`, `staticwebassets.build.json`, `staticwebassets.development.json`, `staticwebassets.pack.json`, and what else the reproduction turns up. Never by "contains the root": a PDB without a path map contains it too, and replacing bytes in a binary breaks it.
-- JSON escapes backslashes. Tokenize the escaped form too, or Windows stores nothing. Windows has never been run, so say so in the docs.
-
-**Keep the safety net.** After tokenizing, a JSON file of these kinds that still holds an absolute path under any root, or the checkout's path in any spelling, means something was missed. Then do not store the project and say why, as today. `HoldCheckoutPaths` becomes that check. The rule stays: the store never holds a writer's path.
-
-**Stop storing the incremental caches.** Add `*.dswa.cache.json`, `staticwebassets.build.json.cache` and `swae.build.ex.cache` to the exclusions in `ProjectOutputs.IsCached`, beside the other caches that only an incremental build reads. First check that claim: `dotnet test --no-build` and `dotnet publish --no-build` must work on a hit without them.
-
-**Copies in dependents need no new code, but check it.** A dependent's copy of `Rcl.staticwebassets.runtime.json` should become a `ManifestReference`, which a hit copies from the dependency's current, already expanded file. `KeyComputer.DependencyCopies` matches by relative path and bytes of local files, which are both expanded. If a dependent's copy is not byte-identical to the dependency's, it is the dependent's own file and goes through the token path, which is why files are chosen by name and not by project.
-
-**Times: take the writer's.** A hit restores the writer's `LastWriteTime` and `Last-Modified`. The ETag and integrity come from content, so what is served is right. Two things follow, both to state in the docs and neither to solve now:
-
-- Two writers of one key store different manifests, so the second gets "another build stored different outputs for this key". Writers race rarely, since the second run of a key hits. If the warning shows up in the tests or on Abp, the times are the first suspect.
-- `mida build` and `dotnet build` differ in these two files in every clone. `RealWorld` already leaves out what differs between two plain builds.
+**Times are the writer's.** A hit restores the writer's `LastWriteTime` in `staticwebassets.build.json` and `Last-Modified` in the endpoints manifests. ETag and integrity come from content, so what is served is right. Two writers of one key store different manifests, so the second gets "another build stored different outputs for this key". Writers race rarely, since the second run of a key hits. `mida build` and `dotnet build` differ in these files in every clone.
 
 ## Decided
 
 The user decided both on 2026-11-12.
 
-1. **SDK 11's hot reload key pair is left out of the cache.** Storing a project would store `browser-tools-key.private.json`, a private key, in a shared bucket, and every reader would get the same pair. So neither key file is stored, and the asset that embeds the public key is kept as built. First find out what reads the key files (most likely only `dotnet watch`). If something a CI run does after a hit needs them, stop and ask. Do not inject a property that turns the browser tools asset off: that would change what a plain build produces.
+1. **SDK 11's hot reload key pair is left out of the cache.** `browser-tools-key.private.json` and `.public.json` in `obj/.../HotReload/` are new on every Debug build of a Web SDK project. The SDK's `EnsureHotReloadBrowserToolsKey` writes them, and its targets name `Microsoft.DotNet.Watch.BrowserToolsBuildOutputs` as the reader, so `dotnet watch`, which builds anyway. A private key does not belong in a shared bucket. The asset that embeds the public key is stored as built.
 2. **A non-deterministic asset is stored.** On SDK 11 the fingerprint of that generated asset is new on every build. Every hit serves the writer's, which is consistent within the entry.
 
-## The stale trap to close first
+## Measured
 
-A host's manifests describe its dependencies' assets: the fingerprint, integrity and compressed file of `Rcl/wwwroot/a.css` are in `Web`'s runtime, build and endpoints manifests. Today a body edit of `a.css` changes none of the lines a host's key takes from a dependency:
+On a three-project repo (a Razor class library with `wwwroot/a.css` and scoped CSS, a Web SDK host with `wwwroot/site.js` that references it and the QuickGrid package, and a project over the host) built at two paths with `-p:ContinuousIntegrationBuild=true` on SDK 10.0.404 and 11.0.100, macOS arm64, `net10.0`:
 
-- `dependency-ref`: the reference assembly of `Rcl` does not change.
-- `dependency-files`: the names in `Rcl/bin/` do not change.
+- The checkout's path is in the four manifests above, in the `*.dswa.cache.json` files and in the host's copies. The package folder is in the host's runtime, build and development manifests and its `rbcswa.dswa.cache.json`. With both replaced by a token, every runtime, development and pack manifest is the same at both paths on SDK 10.
+- Times differ: `staticwebassets.build.json` (with its `Hash`), the endpoints manifests in `bin/` and `obj/`, and `obj/staticwebassets/msbuild.*.props` of a Razor class library, which hold no path.
+- SDK 11 adds the key pair and the asset embedding it. That asset's fingerprint differs between two builds of the same source, and with it the host's runtime, build and endpoints manifests.
+- No file named the .NET install. A `net11.0` project's framework assets would.
 
-So unless the predictor already makes `Rcl/wwwroot/a.css` an input of `Web`, the host hits with a manifest that names the old fingerprint, and the app serves a wrong ETag or a 404 for the fingerprinted URL. Until now this could not happen, because such a host was never stored.
+## Checks
 
-Write this test before the feature, and expect it to fail once hosts are stored: edit `Rcl/wwwroot/a.css` in a built clone, build, start the host, and fetch the asset by its plain and its fingerprinted URL.
+TUnit, in `tests/Mida.Tests`, each on `net10.0` (SDK 10) and `net11.0` (SDK 11):
 
-If it fails, the key needs the dependency's assets. Options, the first preferred:
+- `CacheEndToEndTests.WebCleanCloneAtAnotherPathIsAllHitsAndServesItsAssets`: build, delete the writer's checkout, build a clone at a deeper path: all hits. The clone's runtime manifest names the clone. No text blob names the writer's checkout or the package folder; assemblies do, since the fixture is not a git repo. The host, started with `dotnet Web.dll` in Development, serves its own asset, the library's, the library's scoped CSS and the package's, each by its plain and fingerprinted URL, with bytes that match the integrity in its manifest. `dotnet test --no-build` runs a `WebApplicationFactory` test that fetches two of them. `dotnet publish --no-build` puts both under `wwwroot/`.
+- `WebCloneOnAnotherMachineServesItsPackagesAssets`: a clone with its own `NUGET_PACKAGES` hits, and its runtime manifest names that folder.
+- `EditedAssetIsServedWithItsNewIntegrity`: an edit of the host's asset, the library's asset or its scoped CSS misses what it must and is served with its new integrity. Once when the library misses, and once when it hits from a newer entry than its host.
+- `StaticWebAssetOutsideEveryRootIsNotStoredAndSaysSo`: a library that links an asset from outside the repo is not stored, nor is its host, and the build says why.
+- `ProjectOutputsTests` and `OutputCacheTests`: tokens out and back at another machine's paths, the escaped slash, files left alone, the safety net, a manifest without the mark.
 
-1. A `dependency-assets <name> <hash>` line for every dependency in the closure that has a static web asset build manifest: the hash of its `staticwebassets.build.json` with the times and `Hash` left out, or of the asset list that manifest names. It is read after the dependency has finished, as the reference assembly is.
-2. A `dependency-key` line for such dependencies, as a build-time reference has. Simpler, but every body edit of a Razor class library then misses its hosts, which gives up early cutoff for them.
+Mutations, each failing only its own tests: no expansion on restore fails every test that restores a tokenized file; no tokens on save fails the round trips and the hits; no safety net fails the two tests of it; no `dependency-assets` line fails the stale tests, the library's ones on their integrity.
 
-The same question holds for a dependency's scoped CSS (`*.razor.css`, bundled into `<Project>.styles.css`) and JS modules. Cover one of them in the test.
+## Real repos
 
-## Steps
+`RealWorld/Abp` in the OrbStack container, four pinned cores, ext4, SDK 10.0.402 and 11.0.100: a clean clone at another path went from 122 hits and 41 misses to 163 hits and 0 misses, and from 1.16 to 0.75 of a plain build's time. Its `bin/` comparison passed. Numbers in [benchmarks.md](benchmarks.md#real-world-repos). The writers' times did not cause "different outputs" there, since each key was written once.
 
-1. Reproduce the tables above on both SDKs, with a package Razor class library added to the sample, and correct this note where it is wrong.
-2. Write the tests below against today's code. The clean-clone ones fail with "not stored". Keep them.
-3. Tokens on save and restore, the manifest mark and the safety net. The clean-clone tests pass on SDK 10.
-4. The stale trap: the test, then the key line if it fails.
-5. The cache exclusions, after checking `--no-build` test and publish.
-6. SDK 11: the key files left out, as decided above.
-7. `RealWorld/Abp`, then `RealWorld/OrchardCore`, in the container. Record the numbers in [benchmarks.md](benchmarks.md).
-8. Mutation checks, as [local-store.md](local-store.md#checks) lists for earlier work: no expansion on restore, no tokenizing on save, no safety net, no new key line. Each must fail only its own tests.
-9. Docs.
+## Not done
 
-## Tests
-
-All in TUnit, in `tests/Mida.Tests/CacheEndToEndTests.cs`, building on `WebRepo`, which needs a Razor class library with an asset and a test project over the host. Each runs on both target frameworks, which is how both SDKs get covered.
-
-- **Clean clone.** Build at `a`, delete `a`, build a clone at a deeper path: all hits. The clone's `Web.staticwebassets.runtime.json` names the clone and not `a`. No blob in the cache directory contains `a`'s path or the package folder.
-- **The app serves.** From the clone, with `a` deleted, start the host in Development without building (`dotnet Web.dll` in `bin/`, or `dotnet run --no-build`), and fetch `site.js` and `_content/Rcl/a.css`: 200 with the clone's content. Use port 0 and read the port from the output, and kill the process in a `finally`.
-- **`WebApplicationFactory`.** The test project over the host fetches the same two files, run with `dotnet test --no-build` on the clone. This is the case that crashed with `DirectoryNotFoundException` when relocation was first tried.
-- **Another machine.** The clone built with another `NUGET_PACKAGES` folder, as `CloneOnAnotherMachineHitsThroughTheBucket` does, with a package that brings static web assets.
-- **Stale checks.** After an edit of the host's own asset, of the library's asset, and of a scoped CSS file: the build misses what it must, and the served content and its fingerprinted URL are the new ones. Once when the library misses, and once when it hits from a newer entry than its host, as `EditReachesTestsWhenTheLibraryHitsFromANewerEntryThanItsDependents` does.
-- **Publish.** `dotnet publish --no-build` on the clone puts both assets under `wwwroot/`.
-- **The safety net.** A manifest of these kinds with an absolute path that no token covers is not stored, and the build says so.
-- **Old manifests.** A manifest without the new property still restores.
-
-## Docs
-
-- `README.md`, Limits: drop the static web assets line, or narrow it to what is left.
-- [local-store.md](local-store.md): the decision "A project with static web assets is not stored", the known limit, and the mutation list.
-- [relocation.md](relocation.md): the correction that says file contents are never rewritten, and the table of what goes in the manifest.
-- [cache-key.md](cache-key.md): the new key line, if there is one.
-- [benchmarks.md](benchmarks.md): the Abp and OrchardCore numbers.
-- This note: turn it from a plan into what was built and what was measured.
-
-## Working rules of this repo
-
-- Tests are TUnit, also in generated fixtures.
-- Never run the whole suite or the 1024-project benchmark on the user's machine. Run filtered tests (`--treenode-filter`), and heavy runs in the OrbStack container pinned to four cores, on an ext4 loop mount.
-- Change files with the editor tools, not through shell commands.
-- Commit on `main` only when asked, and do not push unless asked.
-
-## Known before starting
-
-- In that container, on a clean clone at another path, the stored graph is not reused ("Graph evaluated: the path of the checkout changed"), and 22 end-to-end tests fail on that line. The same tests pass on macOS. Not explained as of 2026-11-12. It does not change hits and misses, but tests that also assert "Graph from the store" will fail there for that reason.
-- `RealWorld` compares only `bin/`. Most of what this plan rewrites is in `obj/`, so the end-to-end tests above are what proves it, not that comparison.
-- OrchardCore's own plain builds are not relocatable: its assemblies hold the path of their PDB. That is separate from this plan and limits what its comparison shows.
+- `RealWorld/OrchardCore` was not run. Its 109 misses are expected to be mostly this, which is not checked.
+- Windows has never been run. The doubled-backslash spelling is in `PathTokens` and the unit tests build their JSON with the serializer, so they cover it on Windows, but no build has.
+- A checkout whose roots are not `PathTokens.Plain`, holding a character such as `&`, `'` or `%`, does not expand these files, and a project with them misses with a warning. Only `"`, `\` and control characters would break the JSON, so this is stricter than it needs to be.
+- A path in these manifests that no longer exists at save time is not caught by the net.

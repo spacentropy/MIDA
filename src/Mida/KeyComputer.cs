@@ -1,9 +1,12 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Mida.Store;
 
 namespace Mida;
 
-internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> environment, ConcurrentDictionary<string, string> fileHashes)
+internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string> environment, ConcurrentDictionary<string, string> fileHashes)
 {
     public static readonly StringComparison PathComparison =
         OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
@@ -24,6 +27,7 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> environ
     private readonly ConcurrentDictionary<string, string> referenceHashes = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> inputLines = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<ProjectModel, HashSet<string>> outputNames = new();
+    private readonly ConcurrentDictionary<ProjectModel, string?> assetHashes = new();
     private readonly string repoPrefix = WithSeparator(repoRoot);
 
     /// <summary>True for a global property that a key holds.</summary>
@@ -123,6 +127,17 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> environ
             ];
     });
 
+    // Without the times, which are the sources' and so differ in every checkout.
+    private string? AssetsHash(ProjectModel project)
+    {
+        var endpoints = OutputNames(project).Where(n => n.EndsWith(".staticwebassets.endpoints.json", StringComparison.Ordinal)).ToList();
+        return endpoints.Count == 0 ? null : CacheKey.From(endpoints.Select(n =>
+            $"{n} {Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(LastModified().Replace(File.ReadAllText(Path.Combine(project.OutDir, n)), string.Empty))))}")).Value;
+    }
+
+    [GeneratedRegex("\"Last-Modified\",\"Value\":\"[^\"]*\"")]
+    private static partial Regex LastModified();
+
     public static string WithSeparator(string path)
     {
         var normalized = path.Replace('\\', Path.DirectorySeparatorChar);
@@ -167,6 +182,14 @@ internal sealed class KeyComputer(string repoRoot, IReadOnlyList<string> environ
 
             // A file joining a dependency's bin/, such as a new satellite assembly, leaves its reference assembly alone.
             lines.Add($"dependency-files {name} {CacheKey.From(OutputNames(dependency)).Value}");
+
+            // A host's manifests hold each static web asset's fingerprint and integrity, which change on a body edit of a
+            // library's asset while its API and file names stay. See docs/notes/static-web-assets.md
+            if (assetHashes.GetOrAdd(dependency, AssetsHash) is { } assets)
+            {
+                lines.Add($"dependency-assets {name} {assets}");
+            }
+
             AddDependencies(dependency, lines, dependencyKeys, seen);
         }
     }

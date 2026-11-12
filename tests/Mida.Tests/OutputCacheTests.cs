@@ -63,6 +63,39 @@ public sealed class OutputCacheTests : IDisposable
         }
     }
 
+    private static Relocation Swap(string from, string to) => new(
+        (path, content) => path.EndsWith(".json", StringComparison.Ordinal) ? Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(content).Replace(from, "{R}", StringComparison.Ordinal)) : null,
+        content => Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(content).Replace("{R}", to, StringComparison.Ordinal)));
+
+    [Test]
+    public async Task MarkedFileIsStoredWithTokensAndRestoredWithThisCheckoutsPaths()
+    {
+        var other = Path.Combine(temp, "other");
+        var json = InRepo(repo, "bin/a.json", $"[\"{repo}/wwwroot\"]");
+        var plain = InRepo(repo, "bin/b", repo);
+        await new OutputCache(store, repo, Swap(repo, "unused")).SaveAsync(Key, [json, plain], [], [], TimeSpan.Zero, Token);
+
+        var manifest = await new OutputCache(store, other, Swap("unused", other)).TryRestoreAsync(Key, null, Token);
+
+        Assert.NotNull(manifest);
+        await Assert.That(manifest.Files.Select(f => f.Tokenized)).IsEquivalentTo([true, false]);
+        await Assert.That(File.ReadAllText(Blob(manifest.Files[0].Hash))).IsEqualTo("[\"{R}/wwwroot\"]");
+        await Assert.That(File.ReadAllText(Path.Combine(other, "bin", "a.json"))).IsEqualTo($"[\"{other}/wwwroot\"]");
+        await Assert.That(File.ReadAllText(Path.Combine(other, "bin", "b"))).IsEqualTo(repo);
+    }
+
+    [Test]
+    public async Task ManifestWrittenBeforeTheTokenMarkRestores()
+    {
+        var hash = await new OutputCache(store, repo).SaveBlobAsync("a"u8.ToArray(), Token);
+        await store.TryCreateAsync("v1/ac/" + Key, Encoding.UTF8.GetBytes($$"""{"files":[{"path":"bin/a","hash":"{{hash}}","mode":null}],"references":[],"targets":[]}"""), Token);
+
+        var manifest = await new OutputCache(store, repo, Swap("a", "b")).TryRestoreAsync(Key, null, Token);
+
+        await Assert.That(manifest?.Files[0].Tokenized).IsFalse();
+        await Assert.That(File.ReadAllText(Path.Combine(repo, "bin", "a"))).IsEqualTo("a");
+    }
+
     [Test]
     public async Task OverwritesAReadOnlyFile()
     {

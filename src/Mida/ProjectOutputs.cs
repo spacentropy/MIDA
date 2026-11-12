@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Mida.Store;
+
 namespace Mida;
 
 internal static class ProjectOutputs
@@ -38,21 +41,65 @@ internal static class ProjectOutputs
     }
 
     /// <summary>
-    /// Static web asset manifests name their content roots absolutely, and an app reads them at startup, so a relocated
-    /// one crashes it once the writer's checkout is gone. See docs/notes/local-store.md
+    /// Static web asset manifests name their content roots absolutely, and an app reads them at startup, so the store
+    /// holds them with tokens for the roots. See docs/notes/static-web-assets.md
     /// </summary>
-    // shortcut: such a project is never stored, so it always misses. Upgrade by giving these manifests a {RepoRoot} token.
-    public static bool HoldCheckoutPaths(IEnumerable<string> outputs, string repoRoot)
+    public static Relocation Relocation(PathTokens tokens) => new(
+        (path, content) => Tokenize(path, content, tokens),
+        // A root that JSON would escape cannot go back in as it is.
+        content => tokens.Plain ? tokens.Detokenize(content)! : throw new InvalidDataException("this checkout's paths hold characters JSON escapes"));
+
+    /// <summary>
+    /// Chosen by name, never by content: a PDB holds the root too, and a binary does not survive a text replace.
+    /// WebApplicationFactory takes the host's content root from MvcTestingAppManifest.json, without checking it exists.
+    /// </summary>
+    public static bool IsTokenized(string fileName) => fileName.EndsWith(".staticwebassets.runtime.json", StringComparison.Ordinal)
+        || fileName is "staticwebassets.build.json" or "staticwebassets.development.json" or "staticwebassets.pack.json" or "MvcTestingAppManifest.json";
+
+    // Every static web asset manifest is checked, so one that names a path no token covers is never stored.
+    private static byte[]? Tokenize(string path, byte[] content, PathTokens tokens)
     {
-        var escapedRoot = repoRoot.Replace("\\", "\\\\", StringComparison.Ordinal);
-        return outputs
-            .Where(f => Path.GetFileName(f).Contains("staticwebassets", StringComparison.Ordinal) && Path.GetExtension(f) == ".json")
-            .Any(f => File.ReadAllText(f).Contains(escapedRoot, StringComparison.Ordinal));
+        var name = Path.GetFileName(path);
+        if (!IsTokenized(name) && !(name.Contains("staticwebassets", StringComparison.Ordinal) && Path.GetExtension(name) == ".json"))
+        {
+            return null;
+        }
+
+        var tokenized = IsTokenized(name) ? tokens.Tokenize(content) ?? throw new InvalidDataException($"{path} is not UTF-8") : content;
+        if (FullPath(tokenized) is { } full)
+        {
+            throw new InvalidDataException($"{path} names {full}, which no token covers");
+        }
+
+        return IsTokenized(name) ? tokenized : null;
     }
 
-    /// <summary>Restore owns some files, and the rest hold absolute paths only incremental builds read. See docs/notes/relocation.md</summary>
+    // What these manifests name exists once the build wrote them, and a hash in base64 that starts with a slash does not.
+    // "/" alone is a base path.
+    private static string? FullPath(byte[] json)
+    {
+        ReadOnlySpan<byte> bom = [0xEF, 0xBB, 0xBF];
+        var reader = new Utf8JsonReader(json.AsSpan().StartsWith(bom) ? json.AsSpan(bom.Length) : json);
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.String && reader.GetString() is { Length: > 1 } value && Path.IsPathFullyQualified(value) && Path.Exists(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Restore owns some files, and the rest hold absolute paths only incremental builds read, or a key pair that a build
+    /// makes and dotnet watch reads. See docs/notes/relocation.md and docs/notes/static-web-assets.md
+    /// </summary>
     public static bool IsCached(string fileName) => !(IsRestored(fileName)
         || fileName == "project.nuget.cache"
+        || fileName.EndsWith(".dswa.cache.json", StringComparison.Ordinal)
+        || fileName is "staticwebassets.build.json.cache" or "swae.build.ex.cache"
+        || fileName is "browser-tools-key.private.json" or "browser-tools-key.public.json"
         || fileName.EndsWith(".nuget.dgspec.json", StringComparison.Ordinal)
         || fileName.EndsWith(".assets.cache", StringComparison.Ordinal)
         || fileName.EndsWith("AssemblyReference.cache", StringComparison.Ordinal)

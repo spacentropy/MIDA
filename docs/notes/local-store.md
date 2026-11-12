@@ -27,7 +27,7 @@ That needs a commit. In a `git init` with no commits there is no source root, so
 
 Both deletes stay inside the project's `bin/` and `obj/` (`BaseOutputPath`, `BaseIntermediateOutputPath`), which the build owns. An `OutDir` elsewhere can hold the repo's own files: a committed `out/README.md` was deleted by the first miss before this rule. Neither delete runs when another project writes under the same directory, because a scan cannot tell whose file it sees.
 
-**A project with static web assets is not stored.** Their manifests name content roots absolutely: `*.staticwebassets.runtime.json` in `bin/`, and `staticwebassets.build.json` and others in `obj/`. An app reads the first at startup, in Development, which is also what `WebApplicationFactory` uses. Relocated, the app crashed with `DirectoryNotFoundException` once the writer's checkout was gone, and until then it served the writer's files. So a project whose `*staticwebassets*.json` outputs contain the repo root always misses, and that includes its copies in dependents' `bin/`. A Razor class library, its host and a test project of the host were all checked. On SDK 10 this catches only projects with assets. On SDK 11 every Web SDK project has framework assets, so it catches all of them. Give these files a `{RepoRoot}` token if web projects' misses cost too much.
+**Static web asset manifests are stored with tokens.** They name content roots absolutely: `*.staticwebassets.runtime.json` in `bin/`, and `staticwebassets.build.json` and others in `obj/`. An app reads the first at startup, in Development, which is also what `WebApplicationFactory` uses. Stored as they were, the app crashed with `DirectoryNotFoundException` once the writer's checkout was gone, and until then it served the writer's files. Until 2026-11-12 such a project was never stored. Now a save replaces the repo, the package folder, the .NET install and the profile with tokens in these files, and a restore puts this checkout's back. One that still names a path no token covers is not stored, and the build says so. See [static-web-assets.md](static-web-assets.md).
 
 **A reference needs the same relative path and the same bytes.** Bytes alone would tie unrelated files together, such as two empty ones. A path one of the project's own `CopyToOutputDirectory` items lands on is never a reference, since MSBuild lets the project's item win: the key covers a dependency's source items, but not a file its target generates into `bin/`. Only `OutDir` is matched, never `obj/`. On a hit the source is copied from the dependency's current output, whether that dependency hit or missed.
 
@@ -54,6 +54,8 @@ Mutations, repeated after the suite moved to TUnit: turning off references fails
 
 Mutations for the review fixes, each failing only its own tests: no delete on a hit, no delete on a miss, no shared-directory guard, deletes outside `bin/` and `obj/`, a dependency's file stored as its own source, no static web asset check, no `Validate`, no JSON options, no NUL check, duplicate targets allowed, `ArgumentException` not a failure.
 
+Mutations for static web assets, 2026-11-12, each failing only its own tests: no expansion on restore, no tokens on save, no check for a path no token covers, no `dependency-assets` key line. See [static-web-assets.md](static-web-assets.md#checks).
+
 A hit on a two-project repo took about 0.6 s, restore included, against 0.8 s cold. That compile is too small to say anything about saving.
 
 ## Known limits
@@ -65,7 +67,7 @@ A hit on a two-project repo took about 0.6 s, restore included, against 0.8 s co
 - Unrelated projects sharing one `OutDir` are not supported. Each stores the other's files, so concurrent restores collide, which is a miss with a warning. Worse, the last copy wins, so one can restore the other's older bytes without warning. A file rewritten during a save no longer corrupts a blob: since milestone 5 the stored bytes are the hashed ones. A dependency and its dependent in one directory are safe, but the dependent misses once more on the run after its first, because the directory lists its own outputs as the dependency's. Obsolete files there are never deleted.
 - An `OutDir` outside `bin/` and `obj/` keeps obsolete files.
 - A checkout path containing `'` fails the build with `CS8101`: `ContinuousIntegrationBuild` turns the path into a `PathMap` that csc cannot parse.
-- A project with static web assets always misses, and so does anything that copies its manifests.
+- A project with a static web asset outside the repo, the package folder, the .NET install and the profile always misses, and so does its host.
 
 ## Not tested
 

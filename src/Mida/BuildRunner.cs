@@ -31,7 +31,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         var checkout = Checkout.Of(options.Solution, sdkPath);
         var (repoRoot, tokens) = (checkout.RepoRoot, checkout.Tokens);
         var store = Store();
-        var outputs = new OutputCache(store, repoRoot);
+        var outputs = new OutputCache(store, repoRoot, ProjectOutputs.Relocation(tokens));
         var graphs = new GraphStore(store, outputs, checkout);
 
         IBuildHost? host = null;

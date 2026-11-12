@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Mida.Store;
 
 /// <summary>Stores and restores one project's outputs. Failures throw: the caller turns them into a miss.</summary>
-public sealed class OutputCache(IObjectStore store, string repoRoot)
+public sealed class OutputCache(IObjectStore store, string repoRoot, Relocation? relocation = null)
 {
     private const int MaxUnixFileMode = 0xFFF;
 
@@ -94,9 +94,12 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
             // One read, so the stored bytes are the hashed ones even if the file changes meanwhile.
             // shortcut: the whole file is in memory, and one over 2 GB fails. Stream through a hashing reader if outputs get that large.
             var content = await File.ReadAllBytesAsync(file, token);
+            var relative = Relative(file);
+            var tokenized = relocation?.Store(relative, content);
+            content = tokenized ?? content;
             var hash = Convert.ToHexStringLower(SHA256.HashData(content));
             await store.TryCreateAsync(BlobKey(hash), content, token);
-            stored.Add(new ManifestFile(Relative(file), hash, OperatingSystem.IsWindows() ? null : (int)File.GetUnixFileMode(file)));
+            stored.Add(new ManifestFile(relative, hash, OperatingSystem.IsWindows() ? null : (int)File.GetUnixFileMode(file), tokenized is not null));
         });
 
         // Blobs first: a reader that finds a manifest relies on them. Sorted, so a deterministic build writes identical bytes.
@@ -185,6 +188,13 @@ public sealed class OutputCache(IObjectStore store, string repoRoot)
             }
 
             verified.TryAdd(file.Hash, 0);
+        }
+
+        // After the check, which is of the stored bytes.
+        if (file.Tokenized)
+        {
+            var restore = relocation?.Restore ?? throw new InvalidDataException($"{file.Path} holds tokens and nothing here puts paths back");
+            await File.WriteAllBytesAsync(destination, restore(await File.ReadAllBytesAsync(destination, cancellationToken)), cancellationToken);
         }
 
         if (file.Mode is { } mode && !OperatingSystem.IsWindows())

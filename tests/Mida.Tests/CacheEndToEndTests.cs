@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using static Mida.Tests.TestRepo;
 
 namespace Mida.Tests;
@@ -446,34 +450,222 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(File.Exists(Path.Combine(root, "shared", "Second.dll"))).IsTrue();
     }
 
-    [Test]
-    public async Task StaticWebAssetsAreNotStoredAndOtherProjectsAre()
-    {
-        var clone = WebRepo("a");
-        var first = Build(clone);
-        await Assert.That(first).Contains("0 hits, 2 misses");
-        // Said out loud: on abp 41 of 163 projects missed in a clean clone with nothing to say why.
-        await Assert.That(first).Contains("Web.csproj not stored: static web assets name this checkout");
+    private const string WebMisses = "0 hits, 3 misses";
 
-        clone = WebRepo("b");
-        await Assert.That(Build(clone)).Contains("1 hits, 1 misses");
-        await Assert.That(File.ReadAllText(Path.Combine(clone, "Web", "bin", "Debug", "net10.0", "Web.staticwebassets.runtime.json"))).Contains(clone);
-    }
+    private const string WebHits = "3 hits, 0 misses";
 
-    private string WebRepo(string relativePath)
+    // Asset labels: a host's own, a library's, a library's scoped CSS, and a package's.
+    private const string Site = "site.js";
+    private const string Library = "_content/Rcl/a.css";
+    private const string Scoped = "_content/Rcl/Rcl.bundle.scp.css";
+    private const string Package = "_content/Microsoft.AspNetCore.Components.QuickGrid/Microsoft.AspNetCore.Components.QuickGrid.bundle.scp.css";
+
+    /// <summary>Rcl is a Razor class library, Web its host, which also gets a package's assets, and WebTests runs Web in WebApplicationFactory.</summary>
+    private string WebRepo(string relativePath, string rclItems = "")
     {
         var root = Path.Combine(temp, relativePath);
-        Write(root, "Repo.slnx", """<Solution><Project Path="Lib/Lib.csproj" /><Project Path="Web/Web.csproj" /></Solution>""");
-        Write(root, "Lib/Lib.csproj", Project(string.Empty));
-        Write(root, "Lib/C.cs", "public static class C { }");
-        Write(root, "Web/Web.csproj", """
-            <Project Sdk="Microsoft.NET.Sdk.Web">
+        Write(root, "global.json", GlobalJson);
+        Write(root, "Repo.slnx", """<Solution><Project Path="Rcl/Rcl.csproj" /><Project Path="Web/Web.csproj" /><Project Path="WebTests/WebTests.csproj" /></Solution>""");
+        Write(root, "Rcl/Rcl.csproj", $"""
+            <Project Sdk="Microsoft.NET.Sdk.Razor">
               <PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+              <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" />{rclItems}</ItemGroup>
             </Project>
             """);
-        Write(root, "Web/Program.cs", "System.Console.WriteLine();");
-        Write(root, "Web/wwwroot/app.css", "body { }");
+        Write(root, "Rcl/wwwroot/a.css", "a { color: red }");
+        Write(root, "Rcl/Comp.razor", "<p>comp</p>");
+        Write(root, "Rcl/Comp.razor.css", "p { color: red }");
+        Write(root, "Web/Web.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk.Web">
+              <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="../Rcl/Rcl.csproj" />
+                <PackageReference Include="Microsoft.AspNetCore.Components.QuickGrid" Version="10.0.0" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write(root, "Web/Program.cs", """
+            var app = WebApplication.CreateBuilder(args).Build();
+            app.MapStaticAssets();
+            app.Run();
+
+            public partial class Program { }
+            """);
+        Write(root, "Web/wwwroot/site.js", "var site = 'red';");
+        Write(root, "WebTests/WebTests.csproj", """
+            <Project Sdk="Microsoft.NET.Sdk">
+              <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+              <ItemGroup>
+                <ProjectReference Include="../Web/Web.csproj" />
+                <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
+                <PackageReference Include="TUnit" Version="1.81.5" />
+              </ItemGroup>
+            </Project>
+            """);
+        Write(root, "WebTests/Serve.cs", """
+            using Microsoft.AspNetCore.Mvc.Testing;
+
+            public class Serve
+            {
+                [Test]
+                [Arguments("/site.js")]
+                [Arguments("/_content/Rcl/a.css")]
+                public async Task Asset(string path)
+                {
+                    using var factory = new WebApplicationFactory<Program>();
+                    using var client = factory.CreateClient();
+                    await Assert.That(await client.GetStringAsync(path)).Contains("red");
+                }
+            }
+            """);
         return root;
+    }
+
+    // Started without a build, as CI starts what it built. Port 0, so tests can run side by side.
+    private static async Task Serve(string root, Func<HttpClient, Task> fetch)
+    {
+        var start = new ProcessStartInfo("dotnet", [Path.Combine("bin", "Debug", "net10.0", "Web.dll"), "--urls", "http://127.0.0.1:0"])
+        {
+            WorkingDirectory = Path.Combine(root, "Web"),
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        using var process = Process.Start(start)!;
+        try
+        {
+            const string Listening = "Now listening on: ";
+            string? line;
+            while ((line = await process.StandardOutput.ReadLineAsync()) is not null && !line.Contains(Listening, StringComparison.Ordinal))
+            {
+            }
+
+            if (line is null)
+            {
+                Assert.Fail(await process.StandardError.ReadToEndAsync());
+                return;
+            }
+
+            using var client = new HttpClient { BaseAddress = new Uri(line[(line.IndexOf(Listening, StringComparison.Ordinal) + Listening.Length)..]) };
+            await fetch(client);
+        }
+        finally
+        {
+            process.Kill(entireProcessTree: true);
+        }
+    }
+
+    // As a page links it: by its plain URL, and by the fingerprinted one with the integrity the host's manifest gives it.
+    private static async Task AssertServes(HttpClient client, string root, string label, string content)
+    {
+        var endpoints = JsonNode.Parse(File.ReadAllText(Path.Combine(root, "Web", "bin", "Debug", "net10.0", "Web.staticwebassets.endpoints.json")))!["Endpoints"]!.AsArray();
+        static string? Property(JsonNode endpoint, string list, string name) =>
+            endpoint[list]!.AsArray().FirstOrDefault(p => (string?)p!["Name"] == name)?["Value"]?.GetValue<string>();
+        var fingerprinted = endpoints.First(e => Property(e!, "EndpointProperties", "label") == label && Property(e!, "ResponseHeaders", "Content-Encoding") is null)!;
+
+        foreach (var route in new[] { label, (string)fingerprinted["Route"]! })
+        {
+            var body = await client.GetByteArrayAsync(new Uri(route, UriKind.Relative));
+            await Assert.That(Encoding.UTF8.GetString(body)).Contains(content).Because(route);
+            await Assert.That($"sha256-{Convert.ToBase64String(SHA256.HashData(body))}").IsEqualTo(Property(fingerprinted, "EndpointProperties", "integrity")).Because(route);
+        }
+    }
+
+    private static string PackageRoot(string? packages) => packages
+        ?? Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+
+    [Test]
+    public async Task WebCleanCloneAtAnotherPathIsAllHitsAndServesItsAssets()
+    {
+        var writer = WebRepo("a");
+        await Assert.That(Build(writer)).Contains(WebMisses);
+        Directory.Delete(writer, recursive: true);
+
+        var clone = WebRepo("some deeper/path (b)");
+        await Assert.That(Build(clone)).Contains(WebHits);
+
+        var runtime = File.ReadAllText(Path.Combine(clone, "Web", "bin", "Debug", "net10.0", "Web.staticwebassets.runtime.json"));
+        await Assert.That(runtime).Contains(clone);
+        await Assert.That(runtime).DoesNotContain(writer + Path.DirectorySeparatorChar);
+        // Outside git an assembly names its PDB and its sources, so only text is checked.
+        var texts = Directory.GetFiles(Path.Combine(temp, "cache", "v1", "cas"), "*", SearchOption.AllDirectories)
+            .Select(File.ReadAllBytes).Where(b => !b.Contains((byte)0)).Select(b => Encoding.UTF8.GetString(b)).ToList();
+        foreach (var path in new[] { writer + Path.DirectorySeparatorChar, PackageRoot(null) })
+        {
+            await Assert.That(texts.Where(t => t.Contains(path, StringComparison.Ordinal))).IsEmpty().Because(path);
+        }
+
+        await Serve(clone, async client =>
+        {
+            await AssertServes(client, clone, Site, "red");
+            await AssertServes(client, clone, Library, "red");
+            await AssertServes(client, clone, Scoped, "red");
+            await AssertServes(client, clone, Package, "{");
+        });
+
+        var (exitCode, output) = Run(clone, null, "test", "--project", "WebTests/WebTests.csproj", "--no-build");
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        Dotnet(clone, null, "publish", "Web/Web.csproj", "--no-build", "-c", "Debug", "-o", "published");
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "published", "wwwroot", "site.js"))).Contains("red");
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "published", "wwwroot", "_content", "Rcl", "a.css"))).Contains("red");
+    }
+
+    [Test]
+    public async Task WebCloneOnAnotherMachineServesItsPackagesAssets()
+    {
+        await Assert.That(Build(WebRepo("a"))).Contains(WebMisses);
+
+        var clone = WebRepo("b");
+        var packages = Path.Combine(temp, "packages");
+        var output = Dotnet(clone, packages, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "--cache", Path.Combine(temp, "cache")]);
+        await Assert.That(output).Contains(WebHits);
+
+        var runtime = File.ReadAllText(Path.Combine(clone, "Web", "bin", "Debug", "net10.0", "Web.staticwebassets.runtime.json"));
+        await Assert.That(runtime).Contains(packages);
+        await Assert.That(runtime).DoesNotContain(PackageRoot(null));
+        await Serve(clone, client => AssertServes(client, clone, Package, "{"));
+    }
+
+    // The library's API and file names stay, so only its assets in the key make its host miss.
+    [Test]
+    [Arguments("Web/wwwroot/site.js", Site, "1 hits, 2 misses", false)]
+    [Arguments("Rcl/wwwroot/a.css", Library, WebMisses, false)]
+    [Arguments("Rcl/Comp.razor.css", Scoped, WebMisses, false)]
+    [Arguments("Web/wwwroot/site.js", Site, "1 hits, 2 misses", true)]
+    [Arguments("Rcl/wwwroot/a.css", Library, WebMisses, true)]
+    [Arguments("Rcl/Comp.razor.css", Scoped, WebMisses, true)]
+    public async Task EditedAssetIsServedWithItsNewIntegrity(string file, string label, string misses, bool fromNewerEntry)
+    {
+        var root = WebRepo("a");
+        Build(root);
+        Edit(root, file, "red", "green");
+        await Assert.That(Build(root)).Contains(misses);
+
+        if (fromNewerEntry)
+        {
+            // The library hits from the entry the build above stored, newer than the host's first one.
+            root = WebRepo("b");
+            Edit(root, file, "red", "green");
+            await Assert.That(Build(root)).Contains(WebHits);
+        }
+
+        await Serve(root, client => AssertServes(client, root, label, "green"));
+    }
+
+    [Test]
+    public async Task StaticWebAssetOutsideEveryRootIsNotStoredAndSaysSo()
+    {
+        Write(temp, "outside/b.css", "b { }");
+        var root = WebRepo("a", """<Content Include="../../outside/b.css" Link="wwwroot/b.css" />""");
+
+        var output = Build(root);
+
+        await Assert.That(output).Contains("Rcl.csproj not stored:");
+        await Assert.That(output).Contains("which no token covers");
+        // The host's manifests name it too. The test project's copies of them are the host's.
+        await Assert.That(Build(root)).Contains("1 hits, 2 misses");
     }
 
     [Test]

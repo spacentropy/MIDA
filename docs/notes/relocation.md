@@ -23,8 +23,10 @@ Everything under each project's `bin/` and `obj/`, except:
 | `*.assets.cache`, `*AssemblyReference.cache` | Incremental-build caches, not needed on a hit |
 | `*.FileListAbsolute.txt` | Holds the writer's absolute paths. Only `dotnet clean` and incremental clean read it |
 | `*.CoreCompileInputs.cache`, `*.GeneratedMSBuildEditorConfig.editorconfig` | Added in [milestone 4](local-store.md): differ per checkout, and only an incremental build reads them |
+| `*.dswa.cache.json`, `staticwebassets.build.json.cache`, `swae.build.ex.cache` | Added for [static web assets](static-web-assets.md): differ per checkout, and only an incremental build reads them |
+| `browser-tools-key.private.json`, `browser-tools-key.public.json` | SDK 11 makes a new key pair on every Debug build of a Web SDK project, and only `dotnet watch` reads it. A private key does not belong in a shared bucket |
 
-**Correction, milestone 4:** "No file contents are rewritten" holds only without static web assets. Their manifests hold absolute content roots, so such a project is [not stored](local-store.md#decisions). The real repo's unit tests did not surface this, because the writer's checkout still existed and they do not start the web apps.
+**Correction, milestone 4:** "No file contents are rewritten" holds only without static web assets. Their manifests hold absolute content roots. Until 2026-11-12 such a project was not stored. Since then these files, and `MvcTestingAppManifest.json`, which gives `WebApplicationFactory` its content root, are stored with tokens for the roots, and a restore puts this checkout's back: see [static-web-assets.md](static-web-assets.md). No other file is rewritten. The real repo's unit tests did not surface this, because the writer's checkout still existed and they do not start the web apps.
 
 ## Injected properties
 
