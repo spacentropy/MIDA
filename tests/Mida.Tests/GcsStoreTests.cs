@@ -17,7 +17,7 @@ public sealed class GcsStoreTests : IDisposable
     public void Dispose() => Directory.Delete(temp, recursive: true);
 
     private GcsStore Store(string prefix) =>
-        new(Http, Emulator.Endpoint!, GcsEmulator.Bucket, prefix, _ => Task.FromResult<string?>(null));
+        new(Http, Emulator.Endpoint!, Emulator.Bucket, prefix, Emulator.Token);
 
     [Test]
     public async Task CreateOnlyKeepsTheFirstWriter()

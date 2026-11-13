@@ -139,7 +139,7 @@ public sealed class CacheEndToEndTests : IDisposable
     [Test]
     public async Task CloneOnAnotherMachineHitsThroughTheBucket()
     {
-        var bucket = $"gs://{GcsEmulator.Bucket}/{Emulator.Prefix()}";
+        var bucket = $"gs://{Emulator.Bucket}/{Emulator.Prefix()}";
         await Assert.That(Build(Checkout("a"), "--cache", bucket)).Contains("0 hits, 5 misses");
         // Replayed target results with package paths would need a {NugetPackageRoot} token. This root exists here, so only this check sees one.
         var root = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
