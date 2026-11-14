@@ -1,0 +1,18 @@
+# Runs the command in _RUN on a Cloud Build private pool. The caller passes the pool and _RUN to gcloud builds submit.
+steps:
+  - name: mcr.microsoft.com/dotnet/sdk:11.0
+    script: |
+      #!/usr/bin/env bash
+      set -eo pipefail
+      # shortcut: downloads SDK 10 on every build, bake an image once the download shows in the timings.
+      curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir /usr/share/dotnet
+      export PATH="$PATH:$HOME/.dotnet/tools"
+      # The GCS tests' bucket, made by scripts/pool-setup.sh.
+      export MIDA_TEST_BUCKET="$PROJECT_ID-mida-test"
+      bash -ec "$_RUN"
+timeout: 3600s
+options:
+  # Puts _RUN and PROJECT_ID in the script's environment.
+  automapSubstitutions: true
+  # The build's account writes its log to the bucket that scripts/pool.sh names, where gcloud streams it from.
+  logging: GCS_ONLY

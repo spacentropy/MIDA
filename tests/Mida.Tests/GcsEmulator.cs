@@ -38,6 +38,12 @@ public sealed class GcsEmulator : IAsyncInitializer, IAsyncDisposable
     {
         if (Environment.GetEnvironmentVariable("MIDA_TEST_BUCKET") is { Length: > 0 } bucket)
         {
+            // mida build prefers the emulator variable, so the end-to-end test would leave the real bucket untested.
+            if (Environment.GetEnvironmentVariable("STORAGE_EMULATOR_HOST") is { Length: > 0 })
+            {
+                throw new InvalidOperationException("Unset STORAGE_EMULATOR_HOST to test against MIDA_TEST_BUCKET");
+            }
+
             // Application Default Credentials, which mida build also finds: the metadata server on Cloud Build.
             var credential = (await GoogleCredential.GetApplicationDefaultAsync()).CreateScoped("https://www.googleapis.com/auth/devstorage.read_write");
             Bucket = bucket;
