@@ -27,6 +27,8 @@ internal interface IBuildHost : IDisposable
 /// Hosts MSBuild in this process. Nothing outside this file, <see cref="GraphEvaluation"/> and the plugin names an
 /// MSBuild type, so a run that needs none of them does not load MSBuild.
 /// </summary>
+// MSBuild 18.11 marks BuildManager trim-unsafe because it finds loggers and cache plugins by reflection. Mida passes both as instances. Not verified under AOT.
+[System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Loggers and the cache plugin are passed as instances.")]
 internal sealed class MSBuildHost : IBuildHost
 {
     private readonly BuildOptions options;

@@ -46,7 +46,7 @@ MIDA is a monorepo tool for .NET. It makes one repository with hundreds of proje
   - `IsAotCompatible` is on for every MIDA assembly from day one and warnings are errors, so trim- and AOT-unsafe code cannot land.
   - No reflection-based plugin loading, runtime code generation or reflection-based serialization of our own. JSON goes through source generators.
   - Dependencies must be trim-clean or easy to replace. Prefer the BCL.
-  - MSBuild is reached through the evaluation object model and, for the project-cache plugin, `BuildManager`, all inside `src/Mida`, so MSBuildLocator can later be swapped for a bundled engine with in-process registered SDK resolvers. Whether `BuildManager` and Prediction work under AOT is unchecked.
+  - MSBuild is reached through the evaluation object model and, for the project-cache plugin, `BuildManager`, all inside `src/Mida`, so MSBuildLocator can later be swapped for a bundled engine with in-process registered SDK resolvers. MSBuild 18.11 marks `BuildManager` trim-unsafe (IL2026), which `MSBuildHost` suppresses. Whether it and Prediction work under AOT is unchecked.
 - **Trusted environment.** MIDA runs only on the team's own CI, against a bucket only that CI writes, so security of the cache is a low priority. Validating what the store returns guards against bugs and corruption, not attackers.
 - **CI-system agnostic.** Last-green ref per branch and affected matrix are MIDA outputs; GitHub Actions, Google Cloud Build, Azure Pipelines and GitLab consume them.
 

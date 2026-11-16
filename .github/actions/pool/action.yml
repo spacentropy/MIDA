@@ -1,0 +1,33 @@
+name: Pool
+description: Runs commands on the Cloud Build private pool through scripts/pool.sh, with its log in this step and its TestResults copied back.
+
+inputs:
+  run:
+    description: Bash commands, run in the repo root on the pool.
+    required: true
+  project:
+    description: The GCP_PROJECT secret.
+    required: true
+  workload-identity-provider:
+    description: The GCP_WORKLOAD_IDENTITY_PROVIDER secret, made by scripts/pool-github.sh.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # gcloud's console URLs carry the project number, which no secret holds on its own.
+    - shell: bash
+      run: echo "::add-mask::$(cut -d/ -f2 <<< "$PROVIDER")"
+      env:
+        PROVIDER: ${{ inputs.workload-identity-provider }}
+    # Pinned: a moved tag would run with the token that submits builds.
+    - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      with:
+        workload_identity_provider: ${{ inputs.workload-identity-provider }}
+        service_account: mida-ci@${{ inputs.project }}.iam.gserviceaccount.com
+    # gcloud is on GitHub's Ubuntu runners.
+    - shell: bash
+      run: scripts/pool.sh "$PROJECT" europe-west4 "$RUN"
+      env:
+        PROJECT: ${{ inputs.project }}
+        RUN: ${{ inputs.run }}

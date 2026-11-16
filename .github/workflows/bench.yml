@@ -10,6 +10,8 @@ permissions:
   contents: read
   # Reads the last run's numbers.
   actions: read
+  # Signs in to Google Cloud, which runs the benchmark.
+  id-token: write
 
 jobs:
   bench:
@@ -20,41 +22,39 @@ jobs:
         scenario: [Fresh, Unchanged, BodyEdit, ApiEdit]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          # The generated repo pins SDK 10, which the numbers in docs/notes/benchmarks.md are on.
-          dotnet-version: 10.0.x
-          global-json-file: global.json
-      # The packed tool, installed the way a user installs it.
-      - run: |
-          dotnet pack src/Mida -c Release -p:Version=0.0.0-bench -o out
-          dotnet tool install -g mida --version 0.0.0-bench --add-source out --framework net10.0
-      # The last green run on main, to compare with. The first run has none.
-      - run: gh run download "$(gh run list --workflow bench.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId')" --name bench-${{ matrix.scenario }} --dir previous || true
+      # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The last green run on main, to compare with. The first run has none. Uploaded to the pool with the source.
+      # Only pushes: --branch main also matches a fork's pull request from its own main, whose artifact the fork wrote.
+      - run: gh run download "$(gh run list --workflow bench.yml --branch main --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')" --name bench-${{ matrix.scenario }} --dir previous || true
         env:
           GH_TOKEN: ${{ github.token }}
-      # What this runner is, since runners differ: one commit's Fresh ratio moved by 23% between two runs.
-      # The benchmark's checkouts and caches are under /tmp.
-      - run: |
-          {
-            echo '```'
-            lscpu | grep -E 'Model name|^CPU\(s\):|Thread|L3'
-            grep -m1 -o -w sha_ni /proc/cpuinfo || echo 'no sha_ni'
-            free -h
-            df -hT /tmp
-            echo 'write 1 GiB:' "$(dd if=/dev/zero of=/tmp/dd.bin bs=1M count=1024 conv=fdatasync 2>&1 | tail -1)"
-            echo 'read it back:' "$(dd if=/tmp/dd.bin of=/dev/null bs=1M iflag=direct 2>&1 | tail -1)"
-            rm /tmp/dd.bin
-            echo '```'
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-      - run: dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
-        env:
-          MIDA_BENCH_COUNT: 1024
-          MIDA_BENCH_TOOL: mida
-          MIDA_BENCH_PREVIOUS: ${{ github.workspace }}/previous
-      - run: cat TestResults/bench-*.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7
+      # On the pool: what the worker is, since machines differ (one commit's Fresh ratio moved by 23% between two GitHub
+      # runners), then the packed tool installed the way a user installs it, then the benchmark. Its checkouts and
+      # caches are under /tmp. The generated repo pins SDK 10, which the numbers in docs/notes/benchmarks.md are on.
+      - uses: ./.github/actions/pool
+        with:
+          project: ${{ secrets.GCP_PROJECT }}
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          run: |
+            mkdir -p TestResults
+            {
+              echo '```'
+              lscpu | grep -E 'Model name|^CPU\(s\):|Thread|L3'
+              grep -m1 -o -w sha_ni /proc/cpuinfo || echo 'no sha_ni'
+              grep -E 'MemTotal|MemAvailable' /proc/meminfo
+              df -hT /tmp
+              echo 'write 1 GiB:' "$(dd if=/dev/zero of=/tmp/dd.bin bs=1M count=1024 conv=fdatasync 2>&1 | tail -1)"
+              echo 'read it back:' "$(dd if=/tmp/dd.bin of=/dev/null bs=1M iflag=direct 2>&1 | tail -1)"
+              rm /tmp/dd.bin
+              echo '```'
+            } | tee TestResults/machine.md
+            dotnet pack src/Mida -c Release -p:Version=0.0.0-bench -o out
+            dotnet tool install -g mida --version 0.0.0-bench --add-source out --framework net10.0
+            MIDA_BENCH_COUNT=1024 MIDA_BENCH_TOOL=mida MIDA_BENCH_PREVIOUS="$PWD/previous" \
+              dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
+      - run: cat TestResults/machine.md TestResults/bench-*.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bench-${{ matrix.scenario }}
           path: TestResults/bench-*
