@@ -16,6 +16,94 @@ public sealed class GeneratedRepoTests : IDisposable
     private string Build(GeneratedRepo repo) =>
         Dotnet(repo.Root, null, Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", Path.Combine(temp, "cache"));
 
+    private (int ExitCode, string Output) Test(GeneratedRepo repo, params string[] arguments) =>
+        Run(repo.Root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "test", "Repo.slnx", "--cache", Path.Combine(temp, "cache"), .. arguments]);
+
+    [Test]
+    public async Task UnchangedCleanCloneRunsNoTestProject()
+    {
+        var repo = Generate("a");
+        var tests = repo.Projects.Count(p => p.IsTest);
+        var (exitCode, output) = Test(repo);
+        await Assert.That(output).Contains(TestSummary(tests, 0, 0));
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        (exitCode, output) = Test(Generate("some deeper/path (b)"));
+        await Assert.That(output).Contains($"{Count} hits, 0 misses");
+        await Assert.That(output).Contains(TestSummary(0, 0, tests));
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+    }
+
+    [Test]
+    [Arguments("body")]
+    [Arguments("api")]
+    public async Task EditRunsExactlyTheTestProjectsAboveIt(string kind)
+    {
+        var repo = Generate("a");
+        var (exitCode, output) = Test(repo);
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        // A library with a test above it and a test beside it, so running everything would not pass for running the right ones.
+        var tests = repo.Projects.Where(p => p.IsTest).ToList();
+        var project = repo.Libraries.Where(p => repo.Dependents(p).Any(d => d.IsTest)).MinBy(p => repo.Dependents(p).Count(d => d.IsTest))!;
+        var above = repo.Dependents(project).Where(p => p.IsTest).ToList();
+        await Assert.That(above.Count).IsLessThan(tests.Count);
+
+        if (kind == "body")
+        {
+            // The value the tests above compare changes, so each of them fails, and a failure is not stored: it runs again.
+            repo.BodyEdit(project);
+            foreach (var attempt in new[] { "first", "again" })
+            {
+                (exitCode, output) = Test(repo);
+                await Assert.That(output).Contains(TestSummary(above.Count, above.Count, tests.Count - above.Count)).Because(attempt);
+                await Assert.That(exitCode).IsEqualTo(2).Because(output);
+                foreach (var test in tests)
+                {
+                    await Assert.That(output.Contains($"mida: {test.Name}/{test.Name}.csproj failed", StringComparison.Ordinal)).IsEqualTo(above.Contains(test)).Because(output);
+                }
+            }
+        }
+        else
+        {
+            // Nothing a test compares changes, and still each test above ran once on the new code.
+            repo.ApiEdit(project);
+            (exitCode, output) = Test(repo);
+            await Assert.That(output).Contains(TestSummary(above.Count, 0, tests.Count - above.Count));
+            await Assert.That(exitCode).IsEqualTo(0).Because(output);
+            foreach (var test in tests)
+            {
+                await Assert.That(output.Contains($"mida: {test.Name}/{test.Name}.csproj passed", StringComparison.Ordinal)).IsEqualTo(above.Contains(test)).Because(output);
+            }
+
+            (_, output) = Test(repo);
+            await Assert.That(output).Contains(TestSummary(0, 0, tests.Count));
+        }
+    }
+
+    [Test]
+    public async Task StoredPassCountsOnlyForTheSameRunnerArgumentsAndIsNotWrittenReadOnly()
+    {
+        var repo = Generate("a");
+        var tests = repo.Projects.Count(p => p.IsTest);
+
+        // The second run would find what the first stored, had it stored anything.
+        await Assert.That(Test(repo, "--read-only").Output).Contains(TestSummary(tests, 0, 0));
+        await Assert.That(Test(repo).Output).Contains(TestSummary(tests, 0, 0));
+        await Assert.That(Test(repo).Output).Contains(TestSummary(0, 0, tests));
+
+        // What follows -- reaches the runner and is in the key.
+        await Assert.That(Test(repo, "--", "--no-ansi").Output).Contains(TestSummary(tests, 0, 0));
+        await Assert.That(Test(repo, "--", "--no-ansi").Output).Contains(TestSummary(0, 0, tests));
+
+        await Assert.That(Test(repo, "--all").Output).Contains(TestSummary(tests, 0, 0));
+
+        // A runner that takes no such argument fails, which is how a test project that did not run must read.
+        var (exitCode, output) = Test(repo, "--", "--no-such-option");
+        await Assert.That(output).Contains(TestSummary(tests, tests, 0));
+        await Assert.That(exitCode).IsNotEqualTo(0);
+    }
+
     private static async Task AssertTestsFail(GeneratedRepo repo, HashSet<GeneratedRepo.Project> failing)
     {
         foreach (var test in repo.Projects.Where(p => p.IsTest))

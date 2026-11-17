@@ -1,6 +1,6 @@
 # Local store
 
-Status: implemented, 2026-11-07. Answers [plan milestone 4](../plan.md#4-local-store-end-to-end). Code: `src/Mida.Store`, `src/Mida/MidaCachePlugin.cs`. Checked by real builds and real `dotnet test --no-build` runs of a five-project repo, on macOS arm64 and Linux arm64 in a container, on SDK 10 and 11. **Not yet run on the 49-project repo.**
+Status: implemented, 2026-11-07. Answers [plan milestone 4](../plan.md#4-local-store-end-to-end). Code: `src/Mida.Store`, `src/Mida/MidaCachePlugin.cs`. Checked by real builds and real `dotnet test --no-build` runs of a five-project repo, on macOS arm64 and Linux arm64 in a container, on SDK 10 and 11. Since 2026-11-11 also by builds of OrchardCore and Abp, compared file by file with a plain build ([benchmarks.md](benchmarks.md#real-world-repos)). Since 2026-11-12 a hit can be served before MSBuild loads, from `ProjectCache.WalkAsync` ([stored-graph.md](stored-graph.md)).
 
 ## What is stored
 
@@ -71,6 +71,6 @@ A hit on a two-project repo took about 0.6 s, restore included, against 0.8 s co
 
 ## Not tested
 
-- The 49-project repo: restore time, store overhead on a miss, and the plan's 3 s hit.
+- Timings of the 49-project repo. OrchardCore and Abp were measured in its place.
 - Whether `File.Copy` reflinks on Linux. No btrfs or XFS volume was tried, and the container's overlay filesystem cannot clone.
 - Windows. Release builds and a clone on another NuGet root have been tested since 4b and milestone 5. Clearing the read-only attribute before a delete is Windows-only code that no run has exercised.

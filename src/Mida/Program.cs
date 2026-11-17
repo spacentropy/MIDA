@@ -9,9 +9,19 @@ internal static class Program
 {
     private static int Main(string[] args)
     {
+        // Cut off before parsing: after a -- the parser would take the runner's first argument for the solution.
+        // shortcut: a response file is expanded after this, so a -- inside one reaches mida's parser, which then refuses
+        // the runner's arguments. Split the expanded tokens when someone needs runner arguments in a response file.
+        var separator = args is ["test", ..] ? Array.IndexOf(args, "--") : -1;
+        var (own, runner) = separator < 0 ? (args, []) : (args[..separator], args[(separator + 1)..]);
+
         BuildOptions.Command.SetAction(result => Run(BuildOptions.From(result)));
-        var root = new RootCommand("Builds a .NET repo through MSBuild's static graph with a relocatable output cache.") { BuildOptions.Command };
-        return root.Parse(args).Invoke();
+        BuildOptions.TestCommand.SetAction(result => Run(BuildOptions.From(result, runner)));
+        var root = new RootCommand("Builds a .NET repo through MSBuild's static graph with a relocatable output cache, and runs the tests it has not seen pass.")
+        {
+            BuildOptions.Command, BuildOptions.TestCommand,
+        };
+        return root.Parse(own).Invoke();
     }
 
     private static int Run(BuildOptions options)
@@ -29,7 +39,9 @@ internal static class Program
     /// <summary>Null when the loaded SDK is the one the solution's directory selects.</summary>
     private static string? SdkProblem(string dotnetRoot, string directory, string version)
     {
-        var (exitCode, selected) = SelectedSdk(dotnetRoot, directory);
+        // The SDK that dotnet resolves for the solution's directory, as dotnet build would pick it.
+        var (exitCode, output) = Dotnet(dotnetRoot, directory, ["--version"]);
+        var selected = output.Trim();
         if (exitCode != 0)
         {
             return selected;
@@ -41,20 +53,25 @@ internal static class Program
             : $"global.json selects SDK {selected}, but mida runs on .NET {Environment.Version} and could only load SDK {version}. Run mida on the runtime of SDK {selected}.";
     }
 
-    /// <summary>The SDK that dotnet resolves for the solution's directory, as <c>dotnet build</c> would pick it.</summary>
-    private static (int ExitCode, string Output) SelectedSdk(string dotnetRoot, string directory)
+    /// <summary>Runs the dotnet under <paramref name="dotnetRoot"/> to its end, in this directory when none is given.</summary>
+    public static (int ExitCode, string Output) Dotnet(string dotnetRoot, string? directory, IEnumerable<string> arguments)
     {
-        var start = new ProcessStartInfo(Path.Combine(dotnetRoot, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet"), "--version")
+        var start = new ProcessStartInfo(Path.Combine(dotnetRoot, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet"), arguments)
         {
-            WorkingDirectory = directory,
+            WorkingDirectory = directory ?? string.Empty,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+
+        // Set by a dotnet test above this one, it crashes the reporter of a test application started here.
+        start.Environment.Remove("TESTINGPLATFORM_DOTNETTEST_EXECUTIONID");
         using var process = Process.Start(start)!;
+
+        // Both at once: a process that fills one pipe while the other is being read to its end would never finish.
         var error = process.StandardError.ReadToEndAsync();
         var output = process.StandardOutput.ReadToEnd();
         process.WaitForExit();
-        return (process.ExitCode, (output + error.Result).Trim());
+        return (process.ExitCode, output + error.GetAwaiter().GetResult());
     }
 
     // Not inlined: the JIT would bind Microsoft.Build types before the Locator registers the SDK.

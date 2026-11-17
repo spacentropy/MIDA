@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using static Mida.Tests.TestRepo;
 
 namespace Mida.Tests;
@@ -15,7 +17,7 @@ namespace Mida.Tests;
 /// </summary>
 [Explicit]
 [NotInParallel]
-public sealed class RealWorld : IDisposable
+public sealed partial class RealWorld : IDisposable
 {
     // What mida build injects, so that a plain build's outputs do not name its checkout either.
     private static readonly string[] Relocatable = ["-p:ContinuousIntegrationBuild=true", "-p:IncludeSourceRevisionInInformationalVersion=false"];
@@ -32,13 +34,87 @@ public sealed class RealWorld : IDisposable
     [Test]
     public Task Abp() => Compare("https://github.com/abpframework/abp", "10.7.1", "framework/Volo.Abp.slnx");
 
-    private async Task Compare(string url, string tag, string solution, [CallerMemberName] string name = "")
+    /// <summary>
+    /// OrchardCore's tests, on xUnit v3 and Microsoft.Testing.Platform. Abp's are on VSTest, which mida test refuses.
+    /// </summary>
+    [Test]
+    public Task OrchardCoreTests() => CompareTests(
+        "https://github.com/OrchardCMS/OrchardCore",
+        "v3.0.1",
+        "OrchardCore.slnx",
+        // Needs a Playwright browser, which nothing here installs.
+        "OrchardCore.Tests.Functional");
+
+    private string Source(string url, string tag, string solution)
     {
         var source = Path.Combine(temp, "source");
         Git(temp, "clone", "--depth", "1", "--branch", tag, url, source);
 
         // Package downloads are not what is measured. Every build below is of its own clone, which this leaves nothing in.
         Dotnet(source, null, "restore", solution);
+        return source;
+    }
+
+    /// <summary>
+    /// dotnet test beside mida test with an empty cache, then mida test in a clean clone at another path with the cache
+    /// filled, which must run only what failed before. Only the test projects in <paramref name="mayFail"/> may fail.
+    /// </summary>
+    private async Task CompareTests(string url, string tag, string solution, string mayFail, [CallerMemberName] string name = "")
+    {
+        var source = Source(url, tag, solution);
+        var cache = Path.Combine(temp, "cache");
+        var codes = new int[3];
+        var plain = Build(source, url, "plain", root => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable])));
+        var fresh = Build(source, url, "fresh", root => Exited(1, Benchmarks.RunMida(root, solution, cache, "test")));
+        var filled = Build(source, url, "some/deeper/path/filled", root => Exited(2, Benchmarks.RunMida(root, solution, cache, "test")));
+        var failures = fresh.Output.Split('\n').Where(l => l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList();
+
+        var report = $"""
+            | repo | dotnet test | mida test, empty cache | mida / dotnet | mida test, filled cache | mida / dotnet |
+            |---|---|---|---|---|---|
+            | {name} {tag} | {plain.Seconds:F1} s | {fresh.Seconds:F1} s | {fresh.Seconds / plain.Seconds:F2} | {filled.Seconds:F1} s | {filled.Seconds / plain.Seconds:F2} |
+
+            Exit codes {codes[0]}, {codes[1]} and {codes[2]}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+
+            - Empty cache: {SummaryLines(fresh.Output)}
+            - Filled cache: {SummaryLines(filled.Output)}
+            - Failed with the empty cache: {string.Join(", ", failures)}
+            """;
+        var path = Path.Combine(TestContext.ResultsDirectory, $"realworld-{name}");
+        await File.WriteAllTextAsync(path + ".md", report);
+
+        // The whole output, which holds a failed test project's own: the report is too short for it.
+        await File.WriteAllTextAsync(path + ".txt", fresh.Output);
+        TestContext.Current!.Output.WriteLine($"{path}.md\n{report}");
+
+        // What passed with the empty cache passes from the store; only what failed runs again.
+        var (ran, failed, _) = Counts(fresh.Output);
+        var (ranAgain, _, passedBefore) = Counts(filled.Output);
+        await Assert.That(ran).IsGreaterThan(0);
+        await Assert.That(failures.Where(f => !f.Contains($"/{mayFail}.csproj", StringComparison.Ordinal))).IsEmpty();
+        await Assert.That((ranAgain, passedBefore)).IsEqualTo((failed, ran - failed));
+
+        string Exited(int index, (int ExitCode, string Output) run)
+        {
+            codes[index] = run.ExitCode;
+            return run.Output;
+        }
+    }
+
+    /// <summary>The numbers of the line that ends a mida test, or -1 each without one.</summary>
+    private static (int Ran, int Failed, int PassedBefore) Counts(string output) =>
+        TestSummaryLine().Match(output) is { Success: true } match
+            ? (Number(match, 1), Number(match, 2), Number(match, 3))
+            : (-1, -1, -1);
+
+    private static int Number(Match match, int group) => int.Parse(match.Groups[group].Value, CultureInfo.InvariantCulture);
+
+    [GeneratedRegex(@"(\d+) test projects run, (\d+) failed, (\d+) passed before")]
+    private static partial Regex TestSummaryLine();
+
+    private async Task Compare(string url, string tag, string solution, [CallerMemberName] string name = "")
+    {
+        var source = Source(url, tag, solution);
 
         // Two plain builds at two paths: what differs between them is not mida's doing.
         var plain = Build(source, url, "plain", root => Dotnet(root, null, ["build", solution, .. Relocatable]));
@@ -61,8 +137,8 @@ public sealed class RealWorld : IDisposable
 
             The plain build is the faster of two ({plain.Seconds:F1} s and {again.Seconds:F1} s), cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
-            - Empty cache: {Result(fresh.Output)}
-            - Filled cache: {Result(filled.Output)}
+            - Empty cache: {SummaryLines(fresh.Output)}
+            - Filled cache: {SummaryLines(filled.Output)}
             - {plain.Files.Count} files under bin. {noise.Count} of them differ between the two plain builds and are not compared{Kinds(Differences(plain.Files, again.Files))}
 
             {Section("Empty cache", freshDifferences)}
@@ -151,9 +227,6 @@ public sealed class RealWorld : IDisposable
     private static string Kinds(List<(string Kind, string File)> differences) => differences.Count == 0
         ? "."
         : ": " + string.Join(", ", differences.GroupBy(d => $"{d.Kind} {Path.GetExtension(d.File)}").OrderByDescending(g => g.Count()).Select(g => $"{g.Count()} {g.Key}")) + ".";
-
-    private static string Result(string output) =>
-        string.Join("; ", output.Split('\n').Where(l => l.Contains(" keys in ", StringComparison.Ordinal) || l.Contains(" hits, ", StringComparison.Ordinal)).Select(l => l.Trim()));
 
     private static void Git(string directory, params string[] arguments)
     {

@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         # Tests of tests/Mida.Tests/Benchmarks.cs. Every job builds its own cache and its own plain dotnet build to compare with.
-        scenario: [Fresh, Unchanged, BodyEdit, ApiEdit]
+        scenario: [Fresh, Unchanged, BodyEdit, ApiEdit, TestFresh, TestUnchanged, TestBodyEdit, TestApiEdit]
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.

@@ -28,6 +28,9 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
     private readonly ConcurrentDictionary<string, string> inputLines = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<ProjectModel, HashSet<string>> outputNames = new();
     private readonly ConcurrentDictionary<ProjectModel, string?> assetHashes = new();
+
+    // Once per node, not once per test above it: a node's lines read and hash its project.assets.json.
+    private readonly ConcurrentDictionary<ProjectModel, string> nodeHashes = new();
     private readonly string repoPrefix = WithSeparator(repoRoot);
 
     /// <summary>True for a global property that a key holds.</summary>
@@ -52,7 +55,36 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
             throw new InvalidOperationException("it has no obj/ to note what a hit restores");
         }
 
-        var lines = new List<string>(environment) { $"project {Relative(project.Path)}" };
+        var lines = new List<string>(environment);
+        lines.AddRange(OwnLines(project, targets, globalProperties));
+        AddDependencies(project, lines, dependencyKeys, []);
+        return CacheKey.From(lines);
+    }
+
+    /// <summary>
+    /// The key of a test run: what the test node and every node it reaches are built from, and what its runner is
+    /// given. No reference assemblies, because a body edit below must run the test again, and no outputs, so a node
+    /// without a build key counts too. See docs/notes/mida-test.md
+    /// </summary>
+    public CacheKey ComputeTest(ProjectModel test, IEnumerable<string> arguments)
+    {
+        var closure = new HashSet<ProjectModel> { test };
+        AddClosure(test, closure);
+        return CacheKey.From(
+        [
+            .. environment,
+            $"test {Name(test)}",
+            // One line per node: a key sorts its lines, and those of two nodes could then not be told apart.
+            .. closure.Select(node => $"node {Name(node)} {nodeHashes.GetOrAdd(node, n => CacheKey.From(OwnLines(n, n.Targets, n.Properties)).Value)}"),
+            // Numbered for the same reason: their order is part of what the runner is told.
+            .. arguments.Select((argument, index) => $"argument {index} {argument}"),
+        ]);
+    }
+
+    /// <summary>What a key holds of the node itself, with nothing of its dependencies.</summary>
+    private List<string> OwnLines(ProjectModel project, IEnumerable<string> targets, IEnumerable<KeyValuePair<string, string>> globalProperties)
+    {
+        var lines = new List<string> { $"project {Relative(project.Path)}" };
         lines.AddRange(targets.Select(t => $"target {t}"));
         lines.AddRange(globalProperties
             .Where(p => IsKeyed(p.Key))
@@ -64,8 +96,7 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
             lines.Add($"packages {PackageFingerprint.Compute(File.ReadAllBytes(assets))}");
         }
 
-        AddDependencies(project, lines, dependencyKeys, []);
-        return CacheKey.From(lines);
+        return lines;
     }
 
     /// <summary>

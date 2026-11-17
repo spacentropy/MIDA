@@ -1,6 +1,6 @@
 # MIDA MVP plan
 
-Status: plan, 2026-11-01, updated 2026-11-08 after milestones 1 to 5, an adversarial review, 4b items 1 and 2, and the code of milestone 6. **Next: the run against a real bucket and the first release tag in [milestone 6](#6-mvp-release), plus the real-repo run in 4b item 4.** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md).
+Status: plan, 2026-11-01, updated 2026-11-17. Milestones 1 to 6 are built, and so is [a week of work past them](#after-milestone-6). The first release waited for selective test execution, decided 2026-11-16, and a first cut of that, [`mida test`](#7-mida-test-selective-test-execution), is built since 2026-11-17. No tag exists yet. **Next: [what is left](#next), in order.** Design: [design.md](design.md). Decisions behind this plan: [cache on object storage](notes/build-cache-object-store.md), [NativeAOT deferred](notes/nativeaot.md), [relocation](notes/relocation.md), [project-cache plugin](notes/project-cache-plugin.md), [cache key](notes/cache-key.md), [local store](notes/local-store.md), [benchmarks and test harness](notes/benchmarks.md), [stored graph](notes/stored-graph.md), [static web assets](notes/static-web-assets.md), [multi-targeting](notes/multi-targeting.md), [`mida test`](notes/mida-test.md).
 
 ## Goal
 
@@ -10,13 +10,23 @@ Everything else in the design (affected detection, tests, publish, metrics, cove
 
 ## Current state
 
-Milestones 1 to 5 are done, and so are items 1 to 3 of milestone 4b and the profiling step of item 4. The real-repo measurement of item 4 is open. `mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache gs://<bucket>[/<prefix>]] [--read-only]` (`mida build --help` lists every option) restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project, restores a hit from the local store or through it from GCS, and stores a miss in both. A clean clone at another path is all hits and `dotnet test --no-build` passes on it. See [local-store.md](notes/local-store.md).
+Milestones 1 to 6 are built, except the first tag. `mida build [solution] [-c <configuration>] [-p:<name>=<value>] [--cache gs://<bucket>[/<prefix>]] [--read-only] [--evaluate]` (`mida build --help` lists every option) first looks in the store for an evaluated graph that fits the checkout. With one, it needs neither restore nor evaluation, and when every project then hits, MSBuild is never loaded ([stored-graph.md](notes/stored-graph.md)). Otherwise it restores, evaluates the static graph, predicts inputs, injects the two properties, and runs an in-process graph build whose plugin computes a key for every project, restores a hit from the local store or through it from GCS, and stores a miss in both. A clean clone at another path is all hits and `dotnet test --no-build` passes on it. See [local-store.md](notes/local-store.md).
 
-The summary ends with the time saved: each manifest stores how long its miss took, and a hit adds that up. `mida build` stops with an error when it cannot load the SDK `global.json` selects. It ships as the `mida` tool package, which a `v*` tag pushes to nuget.org.
+The summary ends with the time saved: each manifest stores how long its miss took, and a hit adds that up. Since 2026-11-17 it also says how many graph nodes get no key and why, such as `3 nodes without a key: 3 multi-targeted`, because those are built on every run and are in neither the hits nor the misses. `mida build` stops with an error when it cannot load the SDK `global.json` selects. It ships as the `mida` tool package, which a `v*` tag would push to nuget.org. No tag exists, so today it is packed from source.
 
-Diagnostics today: `--cache <dir>` to use a local store other than `~/.mida/cache`, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 114 on net10.0 and 115 on net11.0, including real builds and real test runs of a small repo and of a generated 8-project graph. The GCS tests start fake-gcs-server through Testcontainers and skip without a Docker that runs Linux containers. Benchmarks on generated 8, 128 and 1024-project repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
+`mida test` takes the same options, builds the same way, and then runs each test project whose pass is not in the store, several at once, without MSBuild. A pass is stored under a key of the sources, packages and properties of the test project and of everything it references, plus the runner arguments after `--`. `--all` runs everything. See [mida-test.md](notes/mida-test.md).
 
-The cache has run on a five-project repo on macOS arm64 and Linux arm64. It has not run on the 49-project repo yet, so the 3 s hit is a sum of spike timings, not a measurement.
+Diagnostics today: `--cache <dir>` to use a local store other than `~/.mida/cache`, `--evaluate` to ignore stored graphs, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 210 on net10.0 and 211 on net11.0 on 2026-11-16 and six more since, which no full run has counted yet, about 13 minutes each on a hosted runner, including real builds and real test runs of a small repo and of a generated 8-project graph. The GCS tests use the bucket `MIDA_TEST_BUCKET` names, else fake-gcs-server through Testcontainers, and skip with neither. Benchmarks on a generated repo and builds of two real repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
+
+Where it stands, 2026-11-16, as `mida build` over a plain `dotnet build` on Linux x64 and ext4, where a hit is a plain copy:
+
+| repo | where | plain build | empty cache | filled cache, clean clone at another path |
+|---|---|---|---|---|
+| OrchardCore v3.0.1, 227 projects | GitHub hosted runner, 4 processors | 162.9 s | 1.09 | 0.10, on 448 hits |
+| Abp 10.7.1, 270 projects | the same | 123.2 s | 1.38 | 0.82, on 163 hits. Its 107 multi-targeted projects have no key and are built |
+| generated, 1024 projects | Cloud Build private pool, 22 processors | 47 s | 1.16 | 0.37 unchanged, 0.51 after a body edit, 0.59 after an API edit |
+
+Both real repos leave the same files under `bin` as `dotnet build`. The generated projects are one class each, so that row is the cache's overhead and not its saving.
 
 ## Scope
 
@@ -24,15 +34,16 @@ In:
 
 - SDK-style C# projects, one target framework per project, `ProjectReference` graphs, Central Package Management.
 - `dotnet build` semantics on Linux, macOS and Windows.
-- .NET SDK 10 and 11 only, the supported versions. Projects may target any framework those SDKs can build.
+- .NET SDK 10 and 11 only, the supported versions. Projects may target any framework those SDKs can build, since real repos still target `net8.0` and `netstandard2.0`.
+- The newest tools only, decided 2026-11-17: a case that only an older tool brings is not handled. Tests run on Microsoft.Testing.Platform only, no VSTest, with the current major of TUnit, xUnit, NUnit or MSTest. No F# or Visual Basic.
 - Local disk store, then GCS. Read-only mode for PR runners. MIDA is a CI tool: laptops run it only to develop MIDA itself, so laptop hits on CI entries are not a goal. Platform and the exact SDK patch are in the key anyway, so a Mac would never hit Linux CI entries.
 - Console summary: hits, misses, time saved.
 
-Next after the MVP: test running and caching, the other half of CI time. Test keys must hash dependency implementations, not reference assemblies. The generated repo in [benchmarks.md](notes/benchmarks.md) is the oracle: after an edit, `mida test` must run exactly the test projects in the dependent closure.
+After the MVP came test running and caching, the other half of CI time, and the gate for the first release. See [milestone 7](#7-mida-test-selective-test-execution).
 
-Later: selective NuGet caching from the bucket, fetching only the packages that projects missing the cache need. A cold restore takes 15.7 s on the test repo against 1.8 s with packages present, the largest part of a hit on a fresh runner. Until then CI caches `~/.nuget/packages` itself. The catch: the key reads `project.assets.json`, and restore needs every package to write it, so a selective fetch needs another source for resolved versions, such as `packages.lock.json`.
+Later: selective NuGet caching from the bucket, fetching only the packages that projects missing the cache need. A cold restore takes 15.7 s on the test repo against 1.8 s with packages present, the largest part of a hit on a fresh runner. Until then CI caches `~/.nuget/packages` itself. Since 2026-11-12 a stored graph brings `project.assets.json` back, so resolved versions no longer need a restore. The packages themselves still do: a restore is skipped only when they are all on disk.
 
-Out, named so nobody builds them by accident: caching multi-targeted projects themselves (their dependents must still get keys, see 4b), publish, OpenTelemetry, coverage, last-green refs, CI generation, S3 and Azure backends, NativeAOT, any daemon or server.
+Out, named so nobody builds them by accident: publish, OpenTelemetry, coverage, last-green refs, CI generation, S3 and Azure backends, NativeAOT, any daemon or server. Caching multi-targeted projects themselves was on this list until 2026-11-13 and is now planned, see [multi-targeting.md](notes/multi-targeting.md).
 
 ## Decisions already made
 
@@ -41,9 +52,9 @@ Out, named so nobody builds them by accident: caching multi-targeted projects th
 | Packaging | Framework-dependent `dotnet tool` multi-targeting `net10.0;net11.0`; MSBuild loaded from the installed SDK through MSBuildLocator. A host cannot load a newer SDK's MSBuild, so a CI image with only SDK 10 needs the `net10.0` build | Exact fidelity with `dotnet build`; NuGet-delivered and workload SDKs work. AOT is deferred, see [nativeaot.md](notes/nativeaot.md); the rules that keep it possible are in design §1.6. |
 | MSBuild integration | MSBuild project-cache plugin, registered programmatically through `BuildParameters.ProjectCacheDescriptor` on an in-process `BuildManager` graph build | Cache get has worked since MSBuild 16.9 on every platform. The project-finished hook fires without `/reportfileaccesses`, so cache add works under `dotnet build` everywhere ([spec](https://github.com/dotnet/msbuild/blob/main/documentation/specs/project-cache.md), "Cache add scenario"). No project files are touched. The API is `Microsoft.Build.ProjectCache`, identical in SDK 10 and 11. |
 | Cache key | Single-phase hash of: predicted input file contents ([Microsoft.Build.Prediction](https://github.com/microsoft/MSBuildPrediction)), repo-local imported props and targets, resolved packages from `project.assets.json`, transitive dependency reference assemblies (`obj/ref`), the full key of build-time dependencies such as source generators, global properties minus an ignore list, SDK version, MSBuild version, platform. Computed during the build, in topological order. See [cache-key.md](notes/cache-key.md) | Without Detours, BuildXL's weak and strong fingerprints collapse into one. Prediction is MIT and maintained (1.2.44, October 2026). |
-| Outputs | Predicted output directories scanned after the build, minus the exclusions in [relocation.md](notes/relocation.md). File contents are not rewritten and timestamps are left alone. Manifest paths stay relative to the repo root, and replayed target results carry `{RepoRoot}` and `{NuGetPackageRoot}`. Files in `bin/` that came from a project dependency are stored as references and resolved to its current file on every hit, because the ref-based key does not cover them ([why](notes/project-cache-plugin.md#stale-dependency-copies)). Target results serialized as JSON through source generators and replayed on a hit | Borrowed from [MSBuildCache](https://github.com/microsoft/MSBuildCache) (MIT). Replayed results are the spec's "most correct" hit option. |
+| Outputs | Predicted output directories scanned after the build, minus the exclusions in [relocation.md](notes/relocation.md). File contents are not rewritten and timestamps are left alone, except in the five static web asset manifests, which are stored with tokens for the checkout's roots since 2026-11-12 ([static-web-assets.md](notes/static-web-assets.md)). Manifest paths stay relative to the repo root, and replayed target results carry `{RepoRoot}` and `{NuGetPackageRoot}`. Files in `bin/` that came from a project dependency are stored as references and resolved to its current file on every hit, because the ref-based key does not cover them ([why](notes/project-cache-plugin.md#stale-dependency-copies)). Target results serialized as JSON through source generators and replayed on a hit | Borrowed from [MSBuildCache](https://github.com/microsoft/MSBuildCache) (MIT). Replayed results are the spec's "most correct" hit option. |
 | Injected properties | `mida build` always passes `ContinuousIntegrationBuild=true` and `IncludeSourceRevisionInInformationalVersion=false` as global properties on every run. Nothing is added to the repo | Portable PDB paths and byte-identical outputs; a commit SHA in the reference assembly would defeat early cutoff. See [relocation.md](notes/relocation.md). |
-| Restore | Not cached. `mida build` runs restore first, then the cached graph build | Same as MSBuildCache. `project.assets.json` carries absolute paths. |
+| Restore | Until 2026-11-12 not cached: `mida build` ran restore first, then the cached graph build. Now skipped when a stored graph fits the checkout and every package is on disk. `project.assets.json` and the generated props and targets then come from the store, with tokens in place of its absolute paths. Packages are not cached | Restore was half of an all-hit build, and most of it was a second evaluation. See [stored-graph.md](notes/stored-graph.md). |
 | Store | `IObjectStore` from [the note](notes/build-cache-object-store.md), cut to three methods, where a restore takes a path so a filesystem store can clone: content-addressed blobs plus manifests, create-only writes, SHA-256 verified on read, once per blob per run. A local filesystem store, with GCS behind it since milestone 5 | No server. No BuildXL cache libraries: they pull RocksDB native binaries and are not trim-clean. |
 | Command line | System.CommandLine 2.0.14 | Help, errors and response files for free. Its `net8.0` assembly is marked trimmable, and on 2026-11-08 a NativeAOT publish of the real option code gave no trim or AOT warnings and parsed correctly as a native binary. Stricter than `dotnet build`: a repeated `-c` is an error, and a parse error exits 1. |
 | Failures | A key that cannot be computed, or any store failure, is a miss with a warning. It never fails the build | The cache must not become a new way to break CI. An exception that escapes a plugin hook does fail the build, so the plugin catches them. |
@@ -52,19 +63,25 @@ Out, named so nobody builds them by accident: caching multi-targeted projects th
 ## Layout
 
 ```
-src/Mida/          CLI, MSBuild hosting (Locator), project-cache plugin, key computation
+src/Mida/          CLI, MSBuild hosting (Locator), project-cache plugin, key computation, stored graph, test runner
 src/Mida.Store/    IObjectStore, manifest model, restore and save, local filesystem store, GCS store. No MSBuild dependency, AOT-clean
 tests/Mida.Tests/  TUnit on Microsoft.Testing.Platform (set in global.json)
 MIDA.slnx          All three projects
-.github/workflows/ ci.yml: tests on Linux, net10.0 and net11.0. release.yml: pack and push to nuget.org on a v* tag.
-                   bench.yml: the benchmark scenarios on the packed tool, on a push to main
+.github/workflows/ ci.yml: tests on Linux, net10.0 and net11.0, on a hosted runner. release.yml: pack and push to nuget.org on a v* tag.
+                   bench.yml: the benchmark scenarios on the packed tool, on a push to main, on the pool
+                   realworld.yml: OrchardCore and Abp, when dispatched, on a hosted runner
+                   gcs.yml: the GCS tests against a real bucket, on a push to main, on the pool
+.github/actions/pool, scripts/pool.sh, cloudbuild.yaml
+                   Run one command on a Cloud Build private pool and copy its TestResults back
+scripts/pool-setup.sh, scripts/pool-github.sh
+                   Provision the pool, its buckets and keyless sign-in from GitHub Actions. Project ids live in repo secrets
 ```
 
 Conventions already in place: `Directory.Build.props` (warnings as errors, all analyzers, `IsAotCompatible`, `net10.0;net11.0`, `runtime-async` on `net11.0` only), SDK pinned in `global.json`. Tests use TUnit only, including test projects that fixtures generate; the test project is the one place `IsAotCompatible` is off, because it never ships. Only `src/Mida` may reference packages that are not trim-clean (Locator, Prediction, Google.Apis.Auth). A new package that claims to be trim-clean is checked with a throwaway NativeAOT publish, as System.CommandLine was. Keep MSBuild types out of `Mida.Store`. MSBuild packages compile against 18.9.6 on `net10.0`, the oldest supported API and the last with a `net10.0` build, and against 18.12.2 on `net11.0`, where Prediction needs 18.11 or newer, with `ExcludeAssets="runtime" PrivateAssets="all"` so the SDK's copies load at run time; Prediction brings `Microsoft.NET.StringTools` in, so that one needs the same treatment. Code that touches Microsoft.Build types must sit in a method that runs after `MSBuildLocator.RegisterDefaults()`, otherwise the JIT binds the types before the SDK path is registered.
 
 ## Milestones
 
-Each ends with a check that can be run. Do them in order. Milestones 1 and 2 decide details of 3 to 5.
+Each ends with a check that can be run. Do them in order. Milestones 1 and 2 decide details of 3 to 5. Milestones 1 to 6 are history, kept for the reasons in them. What is open is under [Next](#next).
 
 ### 1. Relocation spike (half a day)
 
@@ -111,7 +128,7 @@ Done when: `mida build` on a clean clone at a different path reports all hits, a
 
 ### 4b. Fixes from the adversarial review
 
-Added 2026-11-07. Items 1 to 3, the profiling step of item 4 and three of the smaller items are done. The rest of item 4 waits on the 49-project repo. Two reviews of the finished milestone 4 by a second model. They could not break relocation, key coverage or stale-copy handling: inputs such as `.editorconfig`, `global.json`, `Directory.Build.targets` and out-of-tree `Compile` items are in the key, manifests are byte-identical across checkouts, and `UseArtifactsOutput` hits with current dependency copies. What they did find is below, in order. Items 1 and 2 are code. Item 3 is a decision. Item 4 is the measurement milestone 4 skipped.
+Added 2026-11-07. Items 1 to 4 and three of the smaller items are done. The two smaller items left are under [Next](#next). Two reviews of the finished milestone 4 by a second model. They could not break relocation, key coverage or stale-copy handling: inputs such as `.editorconfig`, `global.json`, `Directory.Build.targets` and out-of-tree `Compile` items are in the key, manifests are byte-identical across checkouts, and `UseArtifactsOutput` hits with current dependency copies. What they did find is below, in order. Items 1 and 2 are code. Item 3 is a decision. Item 4 is the measurement milestone 4 skipped.
 
 1. **Done 2026-11-08.** A dependency that is an outer node now adds the lines of every inner node, so its dependents get keys. Resolving the one framework the dependent picks was not needed. `DependencyCopies` already worked, because the closure reaches the inner nodes. The end-to-end tests run the clean clone and both stale checks a second time with `LibB` on `net10.0;netstandard2.0`. A `netstandard2.0` project has no reference assembly unless `ProduceReferenceAssembly` is set, so the key hashes its implementation, and any body edit misses every dependent. That holds for single-target `netstandard2.0` projects too, and outside git that implementation names the checkout, so the test sets the property.
 
@@ -127,7 +144,9 @@ Added 2026-11-07. Items 1 to 3, the profiling step of item 4 and three of the sm
    - Hash reference assemblies with the version attributes masked (`AssemblyVersion`, `AssemblyFileVersion`, `AssemblyInformationalVersion`), through `System.Reflection.Metadata`. Checked 2026-11-08 on .NET 10: an app compiled against `Lib` 2.0.0.0 runs with `Lib` 3.0.0.0, and fails with `FileNotFoundException` on `Lib` 1.0.0.0. So `AssemblyVersion` must stay in the key, since a hit after moving to a branch with a lower version would crash. Masking only `AssemblyFileVersion` and `AssemblyInformationalVersion` is safe, and covers MinVer between major versions, because MinVer sets `AssemblyVersion` to `{Major}.0.0.0`.
    - Or document that these tools defeat early cutoff during Build, and that hits serve stale version stamps, which only matters at pack and publish.
 
-4. **Measure the real repo, and not only on APFS.** The profiling step is done 2026-11-08: 74 misses among 950 hits took 62 s because of two thread-pool starvations inside MSBuild locks, not superlinear work. Saves now run off the plugin hook, and worker nodes start before the graph build, so that run takes 27.6 s ([benchmarks.md](notes/benchmarks.md)). Still to do: run the 49-project repo: hit time with restore, store overhead on a miss, the cost of its five web projects (which always miss now, along with what copies their manifests), and the version-stamping effect if it stamps. Run it on ext4 as well. The 3 s hit relies on APFS cloning (0.9 s), against a plain copy's 18 to 19 s, which is close to the 22 to 28 s compile. If copying dominates there, store files that come from NuGet packages as references to the package folder, like dependency copies, so they are neither stored nor uploaded. Most of the 3.8 GB is package DLLs copied into every `bin/`. Hard links are another option for the local tier. Record the numbers in `docs/notes/local-store.md`, and update the risks.
+4. **Done 2026-11-12, on other repos.** OrchardCore and Abp stand in for the 49-project repo: they are public, larger, and run in CI. Both ran on ext4, in the OrbStack container and on GitHub's hosted runners, so a hit there is a plain copy. A filled cache is 0.10 of a plain build on OrchardCore and 0.82 on Abp ([benchmarks.md](notes/benchmarks.md#real-world-repos)). The web projects' cost was real, 41 of 163 hits on Abp and 109 of 448 on OrchardCore, and is fixed ([static-web-assets.md](notes/static-web-assets.md)). Not done: timings of the 49-project repo, the version-stamping effect on a real repo, and package files as references, which is now under [Next](#next) with its evidence.
+
+   The finding: **Measure the real repo, and not only on APFS.** The profiling step is done 2026-11-08: 74 misses among 950 hits took 62 s because of two thread-pool starvations inside MSBuild locks, not superlinear work. Saves now run off the plugin hook, and worker nodes start before the graph build, so that run takes 27.6 s ([benchmarks.md](notes/benchmarks.md)). Still to do: run the 49-project repo: hit time with restore, store overhead on a miss, the cost of its five web projects (which always miss now, along with what copies their manifests), and the version-stamping effect if it stamps. Run it on ext4 as well. The 3 s hit relies on APFS cloning (0.9 s), against a plain copy's 18 to 19 s, which is close to the 22 to 28 s compile. If copying dominates there, store files that come from NuGet packages as references to the package folder, like dependency copies, so they are neither stored nor uploaded. Most of the 3.8 GB is package DLLs copied into every `bin/`. Hard links are another option for the local tier. Record the numbers in `docs/notes/local-store.md`, and update the risks.
 
 Smaller, take them when nearby:
 
@@ -139,7 +158,7 @@ Smaller, take them when nearby:
 
 ### 5. GCS store
 
-Done 2026-11-08, against [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) 1.56.1 in Docker, which enforces `ifGenerationMatch=0`. It has not met a real bucket, so Application Default Credentials are untested. Without Docker the GCS tests skip.
+Done 2026-11-08, against [fake-gcs-server](https://github.com/fsouza/fake-gcs-server) 1.56.1 in Docker, which enforces `ifGenerationMatch=0`. Since 2026-11-15 the same tests take a real bucket from `MIDA_TEST_BUCKET`, with Application Default Credentials, and `scripts/pool.sh` runs the suite that way on the pool. Since 2026-11-17 `gcs.yml` runs `GcsStoreTests` and the end-to-end bucket test that way on every push to `main`. It has not run yet, so no result is recorded here: see [Next](#next). With neither a bucket nor Docker the GCS tests skip.
 
 - `GcsStore` in `Mida.Store` calls the JSON API over `HttpClient`, so the store stays AOT-clean. `Google.Apis.Auth` supplies only the access token, from `src/Mida`, because it pulls Newtonsoft.Json. `STORAGE_EMULATOR_HOST` points it at an emulator, with no credentials, as in Google's own client libraries.
 - `TieredStore` reads local first and copies what it fetches from remote into local, so a hit always restores from local disk. It writes remote first and local only when remote took the object. A manifest another writer won therefore comes back from remote and can be compared.
@@ -160,7 +179,7 @@ Done when: a hit crosses two machines, or two clones with the local tier disable
 
 ### 6. MVP release
 
-Code done 2026-11-08. Open: one run against a real bucket, and the first tag, which needs a trusted publishing policy on nuget.org, the `release` environment and the `NUGET_USER` variable in the repo. No API key is stored.
+Code done 2026-11-08. The first tag is put off until [milestone 7](#7-mida-test-selective-test-execution) is built, decided 2026-11-16: the first release should select tests, not only cache builds. `release.yml` is ready for trusted publishing, with the `release` environment and the `NUGET_USER` variable, and no API key is stored. The policy on nuget.org is left out on purpose until then.
 
 - Time saved: the manifest has a `buildTime`, from the plugin's miss answer to the project-finished hook, and a hit adds it up. It is summed over projects, so not wall-clock time. A second writer's manifest is compared with the build time left out, since every writer times differently. A manifest without the field reads as zero.
 - The SDK check is real, not hypothetical. MSBuildLocator skips an SDK newer than its runtime, so the `net10.0` build in a repo that pins SDK 11 loaded 10.0.403 without a word. `mida build` now runs `dotnet --version` in the solution's directory, from the dotnet the SDK came from, and stops when the two differ. The `net10.0` test run had that mismatch: fixtures built with SDK 10 and ran `dotnet test` with SDK 11. Fixtures now pin the newest SDK of the runtime under test, and the runner clears the `MSBuildExtensionsPath` and `MSBuildSDKsPath` that `dotnet test` sets, which mixed SDK 11 targets into a fixture's SDK 10 `dotnet pack`.
@@ -171,22 +190,80 @@ Plan as written:
 
 `mida build [-c <configuration>] [-p:<name>=<value>] [--cache <dir>] [--cache gs://<bucket>[/<prefix>]] [--read-only]`, console summary, README install instructions and CI usage (the injected properties, `--no-build` on every later step, caching `~/.nuget/packages` in CI, `--read-only` on PR runners, credentials through ADC or Workload Identity Federation, and the bucket's age-based lifecycle rule from milestone 5), one run against a real bucket, a clear error when the loaded SDK is not the one `global.json` pins, `dotnet tool install` from a tag.
 
+### After milestone 6
+
+Built 2026-11-09 to 2026-11-16, none of it in the plan above:
+
+- **A wrong hit fixed**, 2026-11-09: a file a dependency's target generated into `bin/` replaced the project's own copy of that name. `TieredStore` also downloads each blob once ([local-store.md](notes/local-store.md)).
+- **Benchmarks in CI**, 2026-11-10: `Fresh`, `Unchanged`, `BodyEdit` and `ApiEdit` at 1024 generated projects, the packed tool beside a plain `dotnet build`, the ratio beside the last run's. Each fails unless the run hits and misses exactly the projects the graph says ([benchmarks.md](notes/benchmarks.md)).
+- **Where an all-hit build spends its time**, 2026-11-11: restore with NuGet's static graph evaluation, no background GC, and worker nodes that start during evaluation.
+- **The stored graph**, 2026-11-12: no restore and no evaluation when the project files did not change, and no MSBuild when every project hits ([stored-graph.md](notes/stored-graph.md)).
+- **Real repos**, 2026-11-11: OrchardCore and Abp at pinned tags, each built four times and compared file by file with a plain build. They found the next two.
+- **One framework in `TargetFrameworks`** is cached, 2026-11-12: OrchardCore writes all 227 projects that way and got no keys ([cache-key.md](notes/cache-key.md)).
+- **Static web assets** are cached, 2026-11-12: 41 of Abp's 163 hits and 109 of OrchardCore's 448 were lost to them ([static-web-assets.md](notes/static-web-assets.md)).
+- **A plan for multi-targeted projects**, 2026-11-13, after two reviews. Not built ([multi-targeting.md](notes/multi-targeting.md)).
+- **A Cloud Build private pool**, 2026-11-15 and 16: the benchmark runs there, on one machine type, since the ratio moved by 18 to 23% between hosted runners. The GCS tests can take a real bucket. Releases use nuget.org trusted publishing, and every action is pinned to a commit.
+- **A lost package fixed, and the unkeyed reported**, 2026-11-17: a project with one framework in `TargetFrameworks` and `GeneratePackageOnBuild` hit without writing its `.nupkg`, reproduced as `6 hits, 0 misses` and no package. The review that day found the same with a single `TargetFramework`. No node of a project that packs on build has a key now, and the summary counts the nodes without a key by reason. Steps 1 and 2 of [multi-targeting.md](notes/multi-targeting.md#plan).
+
+### 7. `mida test`: selective test execution
+
+Built 2026-11-17 as a first cut, see [mida-test.md](notes/mida-test.md), which has the spike's findings. It was the gate for the first release. Not done: the release itself and a project's opt-out, both under [Next](#next).
+
+Changes from the plan below:
+
+- mida starts each test project itself with `dotnet exec`, so testing needs no MSBuild and no `dotnet test`. Microsoft.Testing.Platform only: a VSTest project counts as failed (see [Scope](#scope)). `--project` takes one project, and each `dotnet test` evaluates its project again.
+- The stored graph holds the marker: `IsTestingPlatformApplication`, else `IsTestProject`.
+- A node's part of the test key is one line with the hash of its own key lines, because a key sorts its lines.
+- As many test projects at once as there are processors, with only a failure's output shown. `--all` is the way to run everything.
+- A test project that cannot be started, or whose runner refuses its arguments, counts as failed.
+- The benchmark has no body edit scenario: its tests fail, as they must, and a failed run is not timed.
+
+First numbers, 2026-11-17, 128 generated projects with 28 test projects, macOS arm64, `mida test` over `dotnet test`: 1.04 with an empty cache, 0.07 on an unchanged clean clone, 0.53 after an API edit of a leaf that reaches 3 test projects ([benchmarks.md](notes/benchmarks.md#mida-test-2026-11-17)). Not yet measured on Linux or at 1024 projects.
+
+Plan as written:
+
+`mida test` builds through the cache as `mida build` does, then runs only the test projects whose result is not in the store.
+
+- **Test key.** A hash of the lines a project's key gets from the project itself (`input`, `missing`, `packages`, `property`, `sdk`, `msbuild`, `platform`) for the test project and every project in its transitive closure, plus the arguments passed to the runner. No reference assemblies: a body edit two levels down must run the test. No outputs either, so the key needs no build, and a multi-targeted dependency without a build key still has these lines.
+- **Result.** A passed run stores a small record under `v1/test/<key>`, create-only, with its duration. A failed run stores nothing, so it runs again. `--read-only` stores nothing.
+- **Summary.** Test projects run, passed from the store, failed, and the test time saved. The exit code is the runner's.
+- **Spike first, half a day.** What marks a test project (`IsTestProject`, which the stored graph does not hold yet). How to run several with `--no-build` on SDK 10 and 11, for Microsoft.Testing.Platform and for VSTest: one `dotnet test` per project, one for all, or the test executables themselves. What the runner's exit codes mean when no test matches a filter.
+- **Known unsound.** A test that reads the clock, the network, a database or an environment variable passes from the store when the world changed. A way to run everything is needed from the start. Whether a project can opt out is open.
+
+Done when, on the generated repo, where the graph is the oracle: an unchanged clean clone runs no test project; after a body edit `mida test` runs exactly the test projects in `Dependents(project)`, and exactly the ones the oracle names fail; after an API edit it runs the same set and none fail; a failed project runs again on the next run; a read-only run stores no result. Then a benchmark scenario beside `dotnet test`, and the release: the trusted publishing policy on nuget.org, a `v0.1.0` tag, and the README's install line made true.
+
+Later, not in this milestone: build only what the tests to run need, shard, and test-level selection.
+
+## Next
+
+In order. The first two are small and come before the milestone.
+
+1. **Done 2026-11-17.** A package lost on a hit: see [after milestone 6](#after-milestone-6).
+2. **A real bucket in CI.** Written 2026-11-17 as `gcs.yml`, not yet run: one job on the pool that runs `GcsStoreTests` and the end-to-end GCS test with `MIDA_TEST_BUCKET`, on pushes to `main` only, since the sign-in refuses pull requests and tags. Left: look at its first run and record the result in milestone 5. Workload Identity Federation from a hosted runner into `mida build` itself stays untested until a repo uses it.
+3. **What is left of [milestone 7](#7-mida-test-selective-test-execution), then the first release.** `mida test` is built. Left, and each needs a decision first: whether a project can opt out of stored passes, and how. The four `Test*` benchmark scenarios joined `bench.yml` on 2026-11-17, with the pool's limit raised to 1800 s, and `RealWorld/OrchardCoreTests` times `mida test` on OrchardCore's xUnit v3 tests; neither has run on CI yet. Then the release: the trusted publishing policy on nuget.org, a `v0.1.0` tag, and the README's install line made true.
+4. **Multi-targeted projects**, steps 3 to 9 of [multi-targeting.md](notes/multi-targeting.md#plan). Abp builds 107 of its 270 projects five times each on every run, which is the difference between its 0.82 and OrchardCore's 0.10.
+5. **What a hit writes.** On the pool an all-hit run of the 1024-project repo keeps the processors 7% busy with 71% iowait: it waits on the disk. At 128 projects it writes 1.56 GB to restore 46 MB of blobs, mostly package files copied into every test project's `bin/`. Store files that come from a package as references to the package folder, like dependency copies, or hard-link from the local store. A write through a hard link would change the blob, so that one needs a guard.
+6. **What a miss costs.** A fresh `mida build` is 1.09 to 1.38 of a plain build, and used about 30% more CPU time on the generated repo. Not profiled.
+7. Smaller, when nearby: keep a manifest's paths under its project's `bin/` and `obj/` (4b), `Directory.Build.rsp` (4b), eviction of `~/.mida/cache`, a retry in `GcsStore`, a first run on Windows, the 2026-11-16 pool numbers as the benchmark's new baseline once a second run confirms them.
+
 ## Known risks
 
-- Everything so far ran on macOS arm64 and Linux arm64, and Release only on the toy repo on macOS. Windows and Linux x64 are unproven, and the store has not met a repo of real size.
+- It has run on macOS arm64, Linux arm64 and, since 2026-11-10, Linux x64 on hosted runners and the pool, on two real repos of 227 and 270 projects. Windows has never been run.
 - Nothing evicts `~/.mida/cache`, so it grows without limit.
-- The GCS store has only met an emulator. Real buckets, Application Default Credentials, Workload Identity Federation from CI, latency and egress cost are untested. A cold runner fetches each blob in its own request, with no retry.
+- The GCS store meets an emulator in every CI run. A real bucket is reachable through `scripts/pool.sh` and `gcs.yml`, with the metadata server's credentials, and no result of such a run is recorded. Workload Identity Federation from CI, latency and egress cost are untested. A cold runner fetches each blob in its own request, with no retry.
+- A stored graph stands for an evaluation only while the recorded questions cover everything the evaluation read. A read no question records gives a stale graph, so wrong keys. What is known to escape is refused at store time ([stored-graph.md](notes/stored-graph.md#when-it-is-not-used)).
 - The plugin API was experimental until recently and moved namespace between SDK 8 and 10, so a future SDK can break it. The fallback is driving `dotnet build` per project ourselves; keys and the store would not change.
 - Real source generators are untested: the build-time dependency rule was checked with a plain library.
-- Multi-targeted projects get no key, so they rebuild on every run. Their dependents do get keys, and since 2026-11-12 so does a project with one framework in `TargetFrameworks` ([cache-key.md](notes/cache-key.md)). A `netstandard2.0` dependency without `ProduceReferenceAssembly` is keyed by its implementation, so it has no early cutoff.
+- Multi-targeted projects get no key, so they rebuild on every run. The hits and misses count only keyed nodes, and since 2026-11-17 a line of the summary counts the rest. On Abp that is 107 of 270 projects. Their dependents do get keys, and since 2026-11-12 so does a project with one framework in `TargetFrameworks` ([cache-key.md](notes/cache-key.md)). Any project that sets `GeneratePackageOnBuild` is built on every run, whether or not `IsPackable` is false. A dependent can take a file from the wrong framework's output ([multi-targeting.md](notes/multi-targeting.md#found-by-the-reviews)). A `netstandard2.0` dependency without `ProduceReferenceAssembly` is keyed by its implementation, so it has no early cutoff.
 - Static web asset manifests are stored with tokens for the checkout's roots since 2026-11-12 ([static-web-assets.md](notes/static-web-assets.md)). A project with an asset outside those roots is still never stored, and Windows has not been run.
 - Unrelated projects sharing one `OutDir` are unsupported: one can silently restore another's older files. A checkout path containing `'` fails the build with `CS8101`. See [local-store.md](notes/local-store.md).
-- Environment variables are not in the key, so one that changes build output gives a false hit.
+- Environment variables are not in the key, so one that changes build output gives a false hit. A stored graph does record the variables an evaluation read, and evaluates again when one changes, but the key that follows has no line for them.
 - Prediction misses undeclared inputs, so the first keys are slightly unsound. Later mitigation: an extra-inputs glob setting and an audit mode that rebuilds a sample of hits and compares outputs.
 - Serialized target results tie a cache entry to an MSBuild version. The MSBuild version is in the key, so an SDK bump means a cold cache, not a wrong hit.
-- Version stamping (SourceLink, MinVer, GenerateAssemblyInfo) changes outputs per commit. The default commit SHA in `AssemblyInformationalVersion` reaches the reference assembly, so `mida build` turns it off ([relocation.md](notes/relocation.md)). Tools that stamp a version from git (MinVer, NBGV, GitVersion) do the same, and nothing turns them off. That was reproduced with MinVer: early cutoff is lost after any commit, and hits serve stale version stamps. See 4b item 3.
+- Version stamping (SourceLink, MinVer, GenerateAssemblyInfo) changes outputs per commit. The default commit SHA in `AssemblyInformationalVersion` reaches the reference assembly, so `mida build` turns it off ([relocation.md](notes/relocation.md)). Tools that stamp a version from git (MinVer, NBGV, GitVersion) do the same, and nothing turns them off. Since 4b item 3 the two version attributes they change on every commit are left out of the reference assembly's hash, so early cutoff is lost only when `AssemblyVersion` changes. Hits still serve stale version stamps, and no real repo that stamps has been run.
+- `mida test` does not run a test again when only something outside its key changed: the clock, the network, a database, an environment variable, a file that is no build input, or the runtime's patch version. `--all` is the only way around it, and no project can opt out ([mida-test.md](notes/mida-test.md#known-unsound)).
 - A missed dependency reference means tests run against stale code and pass. Every change to the manifest or key must keep the milestone 4 stale check.
 - A plain `dotnet build` or `dotnet test` after `mida build` recompiles everything (49 of 49 on the test repo), so a CI step that forgets `--no-build` silently loses the saving. If local no-op builds become a goal, the recipe is in [relocation.md](notes/relocation.md).
-- **The central performance claim rests on copy-on-write.** A plain copy of outputs takes about as long as compiling them (18.9 s against 27.7 s on the test repo). Typical Linux CI runners use ext4, and Windows NTFS has no reflinks, so a hit there may save little, and a cold runner first downloads about 480 MB of unique blobs. Whether `File.Copy` reflinks on Linux is untested. See 4b item 4.
+- **Without copy-on-write a hit waits on the disk.** This was the plan's largest open risk, and on ext4 it holds up where compile costs something: OrchardCore's all-hit build is 0.10 of a plain build with every hit a plain copy. Where compile is nearly free, as on the generated repo, the copies are what is left: 0.37, at 71% iowait. Windows NTFS has no reflinks and is unmeasured, and so is a cold runner that first downloads every blob. See [Next](#next), item 5.
 - Outputs of `mida build` carry `/_/` source paths, which may hurt debugging them locally. Untested. Plain `dotnet build` is unaffected.
 - `IsAotCompatible` only checks our own calls. Publish a throwaway AOT console that references `Mida.Store` now and then to catch dependency drift.

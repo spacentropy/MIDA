@@ -1,0 +1,29 @@
+name: Real bucket
+
+# Only main: the sign-in to Google Cloud refuses pull requests and tags.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Signs in to Google Cloud, whose pool reaches the bucket.
+  id-token: write
+
+jobs:
+  gcs:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # On the pool, where cloudbuild.yaml sets MIDA_TEST_BUCKET and the metadata server gives the credentials. So the
+      # GCS tests meet a real bucket here, and the emulator in ci.yml.
+      - uses: ./.github/actions/pool
+        with:
+          project: ${{ secrets.GCP_PROJECT }}
+          workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          run: |
+            dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/GcsStoreTests/*"
+            dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/CacheEndToEndTests/(CloneOnAnotherMachineHitsThroughTheBucket|TestPassOnAnotherMachineComesThroughTheBucket)"

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -98,6 +99,16 @@ public sealed class CacheEndToEndTests : IDisposable
         var output = Build(clone);
         await Assert.That(output).Contains(second);
 
+        // The library's outer node and its two inner nodes, which the counts above leave out.
+        if (multiTarget)
+        {
+            await Assert.That(output).Contains("3 nodes without a key: 3 multi-targeted");
+        }
+        else
+        {
+            await Assert.That(output).DoesNotContain("without a key");
+        }
+
         // So the tests run on restore outputs from the store. The multi-targeted library is built on them too.
         await Assert.That(output).Contains("Graph from the store, restore skipped");
         await AssertTestsPass(clone);
@@ -136,6 +147,43 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsFailOn(clone, "edited");
     }
 
+    // A hit writes no package: with TargetFrameworks pack runs in the outer build, which replays target results, and with
+    // TargetFramework the package lands in bin/Debug, outside the outputs a hit restores. So no node of LibB has a key.
+    [Test]
+    [Arguments("<TargetFrameworks>net10.0</TargetFrameworks>", 2)]
+    [Arguments("<TargetFramework>net10.0</TargetFramework>", 1)]
+    public async Task ProjectThatPacksOnBuildIsBuiltAndKeepsItsPackage(string framework, int nodes)
+    {
+        string Packing(string relativePath)
+        {
+            var root = Checkout(relativePath);
+            Edit(root, "LibB/LibB.csproj", "<TargetFramework>net10.0</TargetFramework>", $"{framework}<GeneratePackageOnBuild>True</GeneratePackageOnBuild>");
+            return root;
+        }
+
+        var first = Build(Packing("a"));
+        var clone = Packing("some deeper/path (b)");
+        var output = Build(clone);
+
+        var packages = Directory.GetFiles(Path.Combine(clone, "LibB", "bin"), "*.nupkg", SearchOption.AllDirectories);
+        await Assert.That(packages.Length).IsEqualTo(1).Because(output);
+        using (var package = ZipFile.OpenRead(packages[0]))
+        {
+            using var packed = new MemoryStream();
+            await using (var entry = await package.GetEntry("lib/net10.0/LibB.dll")!.OpenAsync())
+            {
+                await entry.CopyToAsync(packed);
+            }
+
+            await Assert.That(packed.ToArray().SequenceEqual(File.ReadAllBytes(Path.Combine(clone, "LibB", "bin", "Debug", "net10.0", "LibB.dll")))).IsTrue();
+        }
+
+        await Assert.That(first).Contains("0 hits, 4 misses");
+        await Assert.That(output).Contains("4 hits, 0 misses");
+        await Assert.That(output).Contains($"{nodes} nodes without a key: {nodes} packs on build");
+        await AssertTestsPass(clone);
+    }
+
     [Test]
     public async Task CloneOnAnotherMachineHitsThroughTheBucket()
     {
@@ -164,6 +212,20 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(output).Contains("Graph from the store, restore skipped");
         await Assert.That(output).Contains(AllHits);
         await AssertTestsPass(third);
+    }
+
+    // What CI does: one runner's pass must spare the next runner the test, though that one starts with an empty local store.
+    [Test]
+    public async Task TestPassOnAnotherMachineComesThroughTheBucket()
+    {
+        var bucket = $"gs://{Emulator.Bucket}/{Emulator.Prefix()}";
+        string[] mida = [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "test", "--cache", bucket];
+        var output = Dotnet(Checkout("a"), null, [.. mida, "--cache", Path.Combine(temp, "cache")]);
+        await Assert.That(output).Contains(TestSummary(1, 0, 0));
+
+        output = Dotnet(Checkout("b"), null, [.. mida, "--cache", Path.Combine(temp, "other cache")]);
+        await Assert.That(output).Contains(AllHits);
+        await Assert.That(output).Contains(TestSummary(0, 0, 1));
     }
 
     // A task in mida's process binds to mida's copies of assemblies the SDK also ships, such as System.CodeDom, and fails.

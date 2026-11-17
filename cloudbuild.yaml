@@ -19,7 +19,8 @@ steps:
         gcloud storage cp -r TestResults "gs://$PROJECT_ID-mida-builds/results/$BUILD_ID/"
       fi
       exit "$(cat .exit-code 2> /dev/null || echo 0)"
-timeout: 900s
+# A mida test scenario at 1024 projects runs seven builds and the tests after most of them; 900 s was set for builds alone.
+timeout: 1800s
 options:
   # Puts _RUN, PROJECT_ID and BUILD_ID in the scripts' environment.
   automapSubstitutions: true

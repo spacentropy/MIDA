@@ -185,6 +185,12 @@ internal static partial class GraphEvaluation
                     .Select(tokens.TokenizePath),
             ],
             project.GetPropertyValue("IsCrossTargetingBuild") == "true",
+            // Written by the user, in any case.
+            project.GetPropertyValue("GeneratePackageOnBuild").Equals("true", StringComparison.OrdinalIgnoreCase),
+            // A Microsoft.Testing.Platform project also says IsTestProject, so that one is asked first.
+            project.GetPropertyValue("IsTestingPlatformApplication").Equals("true", StringComparison.OrdinalIgnoreCase) ? "mtp"
+                : project.GetPropertyValue("IsTestProject").Equals("true", StringComparison.OrdinalIgnoreCase) ? "vstest"
+                : null,
             Token(Absolute(project, "TargetRefPath")),
             Token(Absolute(project, "TargetPath")),
             tokens.TokenizePath(KeyComputer.WithSeparator(Absolute(project, "OutDir") ?? project.Directory)),

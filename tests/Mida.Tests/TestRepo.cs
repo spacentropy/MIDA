@@ -65,6 +65,15 @@ internal static class TestRepo
         return $"<Solution>{string.Concat(projects)}</Solution>";
     }
 
+    /// <summary>The start of the line that ends a <c>mida test</c>.</summary>
+    public static string TestSummary(int run, int failed, int passedBefore) => $"{run} test projects run, {failed} failed, {passedBefore} passed before";
+
+    /// <summary>The summary lines of a mida run, joined, for a benchmark report.</summary>
+    public static string SummaryLines(string output) => string.Join("; ", output.Split('\n')
+        .Where(l => l.Contains(" keys in ", StringComparison.Ordinal) || l.Contains(" without a key: ", StringComparison.Ordinal)
+            || l.Contains(" hits, ", StringComparison.Ordinal) || l.Contains(" test projects run, ", StringComparison.Ordinal))
+        .Select(l => l.Trim()));
+
     public static (int ExitCode, string Output) Run(string directory, string? packages, params string[] arguments) =>
         Start("dotnet", directory, packages, arguments);
 
@@ -83,6 +92,11 @@ internal static class TestRepo
         // dotnet test points these at its own SDK, which would mix into the SDK the fixture's global.json selects.
         start.Environment.Remove("MSBuildExtensionsPath");
         start.Environment.Remove("MSBuildSDKsPath");
+        // And this names the run we are in. A dotnet test below would give it to all its test projects at once, and its
+        // reporter then ends the process: "Unexpected test result for attempt '8' while the last attempt is '9'".
+        start.Environment.Remove("TESTINGPLATFORM_DOTNETTEST_EXECUTIONID");
+        // A fixture's test run would add its results to the job summary on GitHub, and some fixtures fail on purpose.
+        start.Environment["TUNIT_DISABLE_GITHUB_REPORTER"] = "true";
         if (packages is not null)
         {
             start.Environment["NUGET_PACKAGES"] = packages;

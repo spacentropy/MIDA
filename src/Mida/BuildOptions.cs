@@ -11,7 +11,8 @@ internal sealed record BuildOptions(
     string? Bucket = null,
     string BucketPrefix = "",
     bool ReadOnly = false,
-    bool Evaluate = false)
+    bool Evaluate = false,
+    TestRun? Test = null)
 {
     private const string GcsScheme = "gs://";
 
@@ -31,11 +32,31 @@ internal sealed record BuildOptions(
     private static readonly Option<string[]> PropertyOption = new("--property", "-p")
     {
         Description = "A global property, <name>=<value>. One per -p.",
+        Validators =
+        {
+            result =>
+            {
+                foreach (var token in result.Tokens.Where(t => t.Value.IndexOf('=', StringComparison.Ordinal) <= 0))
+                {
+                    result.AddError($"-p takes <name>=<value>, not '{token.Value}'.");
+                }
+            },
+        },
     };
 
     private static readonly Option<string[]> CacheOption = new("--cache")
     {
         Description = "A local store directory, ~/.mida/cache by default, or gs://<bucket>[/<prefix>] for a GCS store behind it.",
+        Validators =
+        {
+            result =>
+            {
+                foreach (var token in result.Tokens.Where(t => IsRemote(t.Value) && t.Value[GcsScheme.Length..].Split('/')[0].Length == 0))
+                {
+                    result.AddError($"--cache '{token.Value}' names no bucket.");
+                }
+            },
+        },
     };
 
     private static readonly Option<bool> ReadOnlyOption = new("--read-only") { Description = "Store nothing in either store." };
@@ -52,7 +73,18 @@ internal sealed record BuildOptions(
         Description = "Write the lines of each key to this directory.",
     };
 
-    public static Command Command { get; } = CreateCommand();
+    private static readonly Option<bool> AllOption = new("--all")
+    {
+        Description = "Run every test project, also one whose pass is in the store.",
+    };
+
+    public static Command Command { get; } = CreateCommand("build", "Restore and build a solution through the cache.");
+
+    /// <summary>Everything <c>build</c> takes, and after a <c>--</c> the arguments for each test project's runner, which the parser never sees.</summary>
+    public static Command TestCommand { get; } = CreateCommand(
+        "test",
+        "Build as 'mida build' does, then run the test projects whose pass is not in the store. Arguments after -- go to each test project's runner.",
+        AllOption);
 
     private static string DefaultCacheDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".mida", "cache");
@@ -61,7 +93,8 @@ internal sealed record BuildOptions(
     public static BuildOptions? Parse(IReadOnlyList<string> args) =>
         Command.Parse(args) is { Errors.Count: 0 } result ? From(result) : null;
 
-    public static BuildOptions From(ParseResult result)
+    /// <param name="runnerArguments">Not null for <c>mida test</c>: what followed its <c>--</c>.</param>
+    public static BuildOptions From(ParseResult result, IReadOnlyList<string>? runnerArguments = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -89,30 +122,21 @@ internal sealed record BuildOptions(
             parts?[0],
             prefix,
             result.GetValue(ReadOnlyOption),
-            result.GetValue(EvaluateOption));
+            result.GetValue(EvaluateOption),
+            runnerArguments is null ? null : new TestRun(result.GetValue(AllOption), runnerArguments));
     }
 
-    private static Command CreateCommand()
+    private static Command CreateCommand(string name, string description, params Option[] more)
     {
-        PropertyOption.Validators.Add(result =>
-        {
-            foreach (var token in result.Tokens.Where(t => t.Value.IndexOf('=', StringComparison.Ordinal) <= 0))
-            {
-                result.AddError($"-p takes <name>=<value>, not '{token.Value}'.");
-            }
-        });
-        CacheOption.Validators.Add(result =>
-        {
-            foreach (var token in result.Tokens.Where(t => IsRemote(t.Value) && t.Value[GcsScheme.Length..].Split('/')[0].Length == 0))
-            {
-                result.AddError($"--cache '{token.Value}' names no bucket.");
-            }
-        });
-
-        var command = new Command("build", "Restore and build a solution through the cache.")
+        var command = new Command(name, description)
         {
             SolutionArgument, ConfigurationOption, PropertyOption, CacheOption, ReadOnlyOption, EvaluateOption, PrintKeysOption, KeyDetailsOption,
         };
+        foreach (var option in more)
+        {
+            command.Options.Add(option);
+        }
+
         command.Validators.Add(result =>
         {
             // A validator's GetValue skips DefaultValueFactory, so the default is looked up again here.

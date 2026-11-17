@@ -19,6 +19,7 @@ internal sealed record GraphSnapshot(
 /// <param name="Inputs">The predicted input files a key reads, so none of the SDK's, the packages' or the outputs'.</param>
 /// <param name="References">Indexes into the projects.</param>
 /// <param name="BuildTimeReferences">The referenced project files whose behaviour shapes this project's output, such as a generator's.</param>
+/// <param name="Test">"mtp" for a Microsoft.Testing.Platform test project, "vstest" for a VSTest one, which mida test refuses. Null for any other project.</param>
 /// <param name="OwnedRoots">bin/ and obj/, where a hit may delete.</param>
 /// <param name="OwnCopies">Where the project's own items land in its output directory.</param>
 /// <param name="ExtensionsPath">Where restore writes, obj/ unless the project says otherwise.</param>
@@ -31,6 +32,8 @@ internal sealed record SnapshotProject(
     IReadOnlyList<int> References,
     IReadOnlyList<string> BuildTimeReferences,
     bool CrossTargeting,
+    bool PacksOnBuild,
+    string? Test,
     string? TargetRefPath,
     string? TargetPath,
     string OutDir,

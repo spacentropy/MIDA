@@ -1,6 +1,6 @@
 # Benchmarks and the test harness
 
-Status: built 2026-11-07, CI jobs added 2026-11-10. Code: `tests/Mida.Tests/GeneratedRepo.cs` (generator), `GeneratedRepoTests.cs` (correctness, in the suite), `Benchmarks.cs` (timing, `[Explicit]`), `.github/workflows/bench.yml`.
+Status: built 2026-11-07, CI jobs added 2026-11-10 and moved to a Cloud Build private pool 2026-11-16. The sections below are in the order they were measured, so the newest numbers are under [In CI](#in-ci) and [Real-world repos](#real-world-repos). Code: `tests/Mida.Tests/GeneratedRepo.cs` (generator), `GeneratedRepoTests.cs` (correctness, in the suite), `Benchmarks.cs` (timing, `[Explicit]`), `.github/workflows/bench.yml`.
 
 ## One generator, two consumers
 
@@ -23,7 +23,7 @@ The hand-written `TestRepo` stays for the targeted scenarios (analyzer dependenc
 | 1 | `mida build`, empty cache | N misses | wall time, cache size |
 | 2 | clean clone at another path | N hits, every test passes | wall time, the headline number |
 | 3 | partial: {body, API} × {leaf, mid, root} edit | exact miss count, exact failing tests | leaf only: wall time, hits/misses |
-| 4 | later: `mida test` after the same edits | exactly the closure's test projects run | |
+| 4 | `mida test`, empty cache, clean clone, and after the same edits | exactly the test projects above the edit run | empty, clean clone, and a leaf's API edit and behaviour-keeping body edit: wall time beside `dotnet test` |
 
 Every run includes restore, so the rows compare. Multi-targeting is off in the benchmark. Its dependents get keys since plan 4b item 1, but the generator's `net10.0;net11.0` needs SDK 11, which only the `net11.0` host loads, and the numbers below are on SDK 10.
 
@@ -37,9 +37,27 @@ Since 2026-11-10 each scenario is its own test: `Fresh`, `Unchanged`, `BodyEdit`
 
 Run: `MIDA_BENCH_COUNT=1024 dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/*" --output Detailed`, or name one scenario in place of the `*`. The count is 128 unless set. Each scenario writes `TestResults/bench-<scenario>-<count>.md`. `MIDA_BENCH_TOOL` names an installed mida to run in place of the build beside the tests.
 
+### `mida test`, 2026-11-17
+
+`TestFresh`, `TestUnchanged`, `TestBodyEdit` and `TestApiEdit` time `mida test` beside `dotnet test --solution`, which builds as well. They also fail unless exactly the test projects above a miss ran. `BodyEdit`'s edit fails tests, as it must, and a failed run is not timed, so `TestBodyEdit` makes one that keeps the value (`"Name".ToString()`): one project misses, and the test projects above it run anyway, since a test key has no early cutoff. In `bench.yml` since 2026-11-17, with the pool's limit raised from 900 s to 1800 s for them.
+
+128 projects, 28 of them tests, macOS arm64 with 16 processors and APFS, the build beside the tests, fastest of three. One machine and one run, so a first look and not a baseline:
+
+| scenario | `dotnet test` | `mida test` | mida / dotnet | test projects run |
+|---|---|---|---|---|
+| `TestFresh` | 10.6 s | 11.0 s | 1.04 | 28 |
+| `TestUnchanged` | 10.5 s | 0.7 s | 0.07 | 0 |
+| `TestApiEdit` | 10.4 s | 5.5 s | 0.53 | 3 |
+
+Again later that day on net10.0, after test keys hashed each node once and stored passes were looked up before any test started: `TestFresh` 0.97, `TestUnchanged` 0.07, `TestBodyEdit` 0.38 (9.8 s against 3.8 s, 3 test projects run), `TestApiEdit` 0.51.
+
+Before test projects ran in parallel, `TestFresh` was 40.5 s against 12.1 s, 3.34, and `TestApiEdit` 0.71. Each generated test project takes about a second to start and run its one test.
+
+A `dotnet test` that a test starts inherits `TESTINGPLATFORM_DOTNETTEST_EXECUTIONID` from the run it is in and hands it to all its test projects, and SDK 10.0.404's reporter then ends the process with "Unexpected test result for attempt '8' while the last attempt is '9'". `TestRepo.Start` removes the variable.
+
 ## In CI
 
-`.github/workflows/bench.yml` runs the four scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster, as long as both runs had the same CPU model. Each result stores its model in `bench-<scenario>-<count>.cpu`. When the two differ, the column names the other model, and the difference says nothing about the commit.
+`.github/workflows/bench.yml` runs the eight scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Since 2026-11-16 the job on GitHub only submits the work: `scripts/pool.sh` runs it on a Cloud Build private pool through `cloudbuild.yaml`, streams the log and copies `TestResults` back. Every run then has the same machine type, a `c3-highcpu-22`, which the hosted runners could not give: see the numbers below. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster, as long as both runs had the same CPU model. Each result stores its model in `bench-<scenario>-<count>.cpu`. When the two differ, the column names the other model, and the difference says nothing about the commit.
 
 Each summary also says what the runner is: CPU model, memory, disk and how fast that disk writes and reads. For each of the three repetitions it says what the whole machine did meanwhile: CPU busy, iowait and steal, and the memory left.
 
@@ -72,6 +90,19 @@ The three repetitions in one job agree: `Fresh` took 146.9, 147.0 and 151.7 s, `
 - A run of hits waits on the disk. ext4 does not clone, so every hit is a plain copy, and a built checkout of this size is 12 to 14 GB: six fit in the 85 GB the runner has free and seven did not.
 
 A job takes 14 to 18 minutes. A hosted runner's disk does not hold seven built checkouts of this size, so each is deleted once it is timed.
+
+The first run on the pool, 2026-11-16, commit `8dd187e`: Ubuntu 26.04 x64, 22 processors, Intel Xeon Platinum 8481C. Since the tables above mida got the changes of 2026-11-11 and the [stored graph](stored-graph.md):
+
+| scenario | dotnet build | mida build | mida / dotnet | the run before, on a hosted runner | processors busy, iowait during mida |
+|---|---|---|---|---|---|
+| Fresh | 46.9 s | 54.6 s | 1.16 | 1.16 | 68%, 2% |
+| Unchanged | 47.3 s | 17.5 s | 0.37 | 0.28 | 7%, 71% |
+| BodyEdit | 47.5 s | 24.1 s | 0.51 | 0.64 | 16%, 49% |
+| ApiEdit | 47.3 s | 28.0 s | 0.59 | 0.71 | 27%, 43% |
+
+- The three repetitions of each agree within 2%, and the plain build is 46.9 to 48.2 s in all twelve.
+- The ratios do not compare with the hosted runners': with 22 processors the plain build is 2.5 times faster, and a run of hits is not, because it waits on the disk. `Unchanged` keeps the processors 7% busy. So this run is the pool's baseline, and the next one is the first that says something about a commit.
+- `Unchanged` on a hosted runner went from 0.71 on 2026-11-10 to 0.28 on 2026-11-14, on the same CPU model. That is the stored graph and the changes of 2026-11-11.
 
 ## Numbers
 
@@ -156,7 +187,7 @@ What is left: restore is half of an all-hit build, 2.2 of 4.2 s, and nothing cac
 
 ## How much of a hit is MSBuild, 2026-11-11
 
-Status: measured, nothing built. 128 projects, SDK 10, Debug, mida in Release, a clean clone at another path, build servers shut down first. Two machines: macOS arm64 with 16 processors on APFS, and Linux arm64 in an OrbStack container pinned to 4 cores (`--cpuset-cpus 0-3`) on an ext4 loop image, SDK 10.0.402. Phases are timed inside mida, medians of three runs. Linux runs that stalled on the disk, see below, are left out.
+Status: measured 2026-11-11. The three rows of the last table were built the next day, see [stored-graph.md](stored-graph.md). 128 projects, SDK 10, Debug, mida in Release, a clean clone at another path, build servers shut down first. Two machines: macOS arm64 with 16 processors on APFS, and Linux arm64 in an OrbStack container pinned to 4 cores (`--cpuset-cpus 0-3`) on an ext4 loop image, SDK 10.0.402. Phases are timed inside mida, medians of three runs. Linux runs that stalled on the disk, see below, are left out.
 
 All hits:
 
@@ -230,6 +261,14 @@ A test clones the tag once, restores there to fill the package cache, and then b
 
 It hashes every file under a `bin` directory, with each mention of the checkout's own path replaced by a token. So a file that names its checkout compares equal across checkouts, and a file that a hit restored with the writer's path in it does not. The test fails unless 3 and 4 left the same files with the same hashes as 1. It writes `TestResults/realworld-<test>.md` with the times, the hit and miss counts and the first 50 differences, and all of them in the `.txt` beside it. The plain time is the faster of 1 and 2, and each mida time is a single run.
 
+`RealWorld/OrchardCoreTests`, added 2026-11-17, times `dotnet test --solution` beside `mida test` with an empty cache, then `mida test` in a clean clone at another path with the cache filled. It fails unless that last run runs exactly the test projects that failed before and takes the rest from the store. A test project that fails upstream is listed in the report, with the whole output in the `.txt` beside it, and does not fail the test. Abp has no such test: its tests are on xUnit v2 and VSTest, which `mida test` refuses. First run, macOS arm64 with 16 processors, the build beside the tests:
+
+| repo | dotnet test | mida test, empty cache | mida / dotnet | mida test, filled cache | mida / dotnet |
+|---|---|---|---|---|---|
+| OrchardCore v3.0.1 | 67.8 s | 68.2 s | 1.00 | 11.6 s | 0.17 |
+
+Four test projects. `OrchardCore.Tests.Functional` failed in every run, `dotnet test`'s too, because its Playwright browser was not installed, so the filled run ran it again and took the other three from the store. The build comparison on the same day still had 448 hits and no node without a key: 44.8 s, 48.0 s (1.07) and 7.7 s (0.17).
+
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 
 First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
@@ -244,6 +283,7 @@ First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.
 - OrchardCore gets no keys: every project sets `TargetFrameworks`, with the one value `net10.0`, and a multi-targeted project is not cached. So this run compared three plain builds. Fixed 2026-11-12 ([cache-key.md](cache-key.md)), and the same test then gave 448 keys, two for each project: 88.5 s plain, 119.0 s with an empty cache (1.34), and 76.9 s with a filled one (0.87) on 339 hits and 109 misses. Which projects miss is not looked at yet.
 - Abp again on 2026-11-12, once static web asset manifests were stored with tokens ([static-web-assets.md](static-web-assets.md)), same container on a 48 GB ext4 image (12 GB ran out): 49.2 s plain (the faster of 69.0 s and 49.2 s), 65.4 s with an empty cache (1.33), and 37.0 s with a filled one (0.75) on 163 hits and 0 misses, against 1.16 and 41 misses before. Both mida builds left the same files under `bin` as `dotnet build`, and neither said "not stored" or "different outputs". Cache 1,007 MB.
 - Both on GitHub Actions on 2026-11-12, `ubuntu-latest` x64, four processors, after the static web asset change. Both passed, and both mida builds left the same files under `bin` as `dotnet build`. Abp: 127.0 s plain (the faster of 174.1 s and 127.0 s), 168.8 s empty (1.33), 101.5 s filled (0.80) on 163 hits and 0 misses. OrchardCore: 212.4 s plain (the faster of 218.0 s and 212.4 s), 208.1 s empty (0.98), 19.9 s filled (0.09) on 448 hits and 0 misses, so its 109 misses were this too.
+- Both again on 2026-11-16, same kind of runner, commit `8dd187e`, both passed. Abp: 123.2 s plain (the faster of 180.6 s and 123.2 s), 169.8 s empty (1.38), 100.7 s filled (0.82) on 163 hits. OrchardCore: 162.9 s plain, 177.8 s empty (1.09), 16.8 s filled (0.10) on 448 hits. Abp's 0.82 is its 107 multi-targeted projects, which have no key ([multi-targeting.md](multi-targeting.md)).
 - OrchardCore's own assemblies differ between two plain builds: 9,089 of 17,957 files, about 250 assemblies and their copies. The assembly holds the full path of its PDB, since `SourceRoot` has the package folder and not the repo, so `PathMap` maps nothing in the checkout. The repo references `Microsoft.SourceLink.GitHub` 10.0.300 as a `GlobalPackageReference` and built on SDK 11. Which of the two leaves the repo's root out is not checked.
 
 Not covered: `obj`, starting the app, and edits. The plan for edits stands: the scenarios 0 to 3, with one generic partial edit: append a comment line to a `.cs` in a leaf project. That changes the key but not the reference assembly, so it checks early cutoff without knowing the repo. API edits need repo knowledge, so skip them there.

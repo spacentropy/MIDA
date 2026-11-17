@@ -23,6 +23,11 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
 
     public bool CrossTargeting => stored.CrossTargeting;
 
+    public bool PacksOnBuild => stored.PacksOnBuild;
+
+    /// <summary>How a test project runs, as <see cref="SnapshotProject.Test"/> says. Null for any other project.</summary>
+    public string? Test => stored.Test;
+
     /// <summary>The global property that tells an inner build from its outer build. Empty when not set.</summary>
     public string TargetFramework => Properties.GetValueOrDefault("TargetFramework", string.Empty);
 
@@ -57,7 +62,8 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
 
 internal sealed class GraphModel
 {
-    private readonly Dictionary<(string Path, string TargetFramework), ProjectModel> keyed;
+    private readonly Dictionary<(string Path, string TargetFramework), ProjectModel> keyed = [];
+    private readonly List<string> unkeyed = [];
     private readonly HashSet<ProjectModel> sharing;
 
     public GraphModel(IReadOnlyList<string> environment, IReadOnlyList<SnapshotProject> stored, PathTokens tokens)
@@ -79,11 +85,30 @@ internal sealed class GraphModel
 
         // A project with several inner nodes is multi-targeted, which is out of scope: it stays a plain build. One that
         // names a single framework in TargetFrameworks has an outer node and one inner node, and both get keys.
-        keyed = projects
-            .GroupBy(p => p.Path, StringComparer.Ordinal)
-            .Where(g => g.Count() == 1 || (g.Count() == 2 && g.Count(p => p.CrossTargeting) == 1 && g.First().TargetFramework != g.Last().TargetFramework))
-            .SelectMany(g => g)
-            .ToDictionary(p => (p.Path, p.TargetFramework));
+        foreach (var nodes in projects.GroupBy(p => p.Path, StringComparer.Ordinal).Select(g => g.ToList()))
+        {
+            var outer = nodes.Count(p => p.CrossTargeting);
+
+            // A hit writes no package. With TargetFrameworks pack runs in the outer build, which replays target results, and
+            // with TargetFramework the package goes to bin/<configuration>, outside the outputs a hit restores. An inner
+            // node stays without a key too: whether its hit suits the pack after it is not checked. See docs/notes/multi-targeting.md
+            // shortcut: every project that packs on build is built every time, store the package as an output when one costs too much.
+            var why = nodes.Any(p => p.PacksOnBuild) ? "packs on build"
+                : nodes.Count == 1 || (nodes.Count == 2 && outer == 1 && nodes[0].TargetFramework != nodes[1].TargetFramework) ? null
+                : outer > 0 ? "multi-targeted"
+                : "built with several sets of properties";
+            foreach (var node in nodes)
+            {
+                if (why is null)
+                {
+                    keyed.Add((node.Path, node.TargetFramework), node);
+                }
+                else
+                {
+                    unkeyed.Add(why);
+                }
+            }
+        }
 
         // A scan sees everything under a project's directories, so another project's outputs there are not obsolete.
         // Sorted, every directory under another follows it, which spares comparing each pair of projects.
@@ -115,6 +140,9 @@ internal sealed class GraphModel
 
     /// <summary>Every node, each after the nodes it references.</summary>
     public IReadOnlyList<ProjectModel> Projects { get; }
+
+    /// <summary>For each node that gets no key whatever its inputs, the reason, worded to follow a count.</summary>
+    public IReadOnlyList<string> Unkeyed => unkeyed;
 
     /// <summary>False for a path with no node or with several inner nodes, which then has no key.</summary>
     public bool TryGetProject(string path, string targetFramework, out ProjectModel project) => keyed.TryGetValue((path, targetFramework), out project!);

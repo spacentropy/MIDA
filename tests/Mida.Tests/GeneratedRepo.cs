@@ -98,9 +98,12 @@ internal sealed class GeneratedRepo
     }
 
     /// <summary>The project and everything that transitively references it.</summary>
-    public HashSet<Project> Dependents(Project project)
+    public HashSet<Project> Dependents(Project project) => Dependents([project]);
+
+    /// <summary>The projects and everything that transitively references any of them.</summary>
+    public HashSet<Project> Dependents(IEnumerable<Project> projects)
     {
-        var set = new HashSet<Project> { project };
+        var set = projects.ToHashSet();
         // References only point at earlier projects, so one pass in order is the closure.
         foreach (var p in Projects)
         {
@@ -115,6 +118,9 @@ internal sealed class GeneratedRepo
 
     /// <summary>Changes the value Name() returns, not the API: only this project's key changes, every test above it fails.</summary>
     public void BodyEdit(Project project) => Edit(project, $"\"{project.Name}\"", $"\"{project.Name}x\"");
+
+    /// <summary>Changes the body, not the value Name() returns nor the API: only this project misses, every test above it runs and passes.</summary>
+    public void RefactorEdit(Project project) => Edit(project, $"\"{project.Name}\"", $"\"{project.Name}\".ToString()");
 
     /// <summary>Adds a public member: the reference assembly changes, so every dependent's key changes.</summary>
     public void ApiEdit(Project project) => Edit(project, "{ public static", "{ public static string Added() => \"\"; public static");
