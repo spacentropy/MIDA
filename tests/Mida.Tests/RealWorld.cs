@@ -85,6 +85,7 @@ public sealed partial class RealWorld : IDisposable
 
         // The whole output, which holds a failed test project's own: the report is too short for it.
         await File.WriteAllTextAsync(path + ".txt", fresh.Output);
+        await File.WriteAllTextAsync(path + ".plain.txt", plain.Output);
         TestContext.Current!.Output.WriteLine($"{path}.md\n{report}");
 
         // What passed with the empty cache passes from the store; only what failed runs again.
