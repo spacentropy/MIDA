@@ -13,19 +13,22 @@ repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
 repo_id=$(gh api "repos/$repo" --jq .id)
 ci=mida-ci@$project.iam.gserviceaccount.com
 build=mida-build@$project.iam.gserviceaccount.com
-pool=projects/$number/locations/global/workloadIdentityPools/github
+# The binding below trusts every provider in this pool, so the pool holds MIDA's provider and nothing else. A generic
+# name like github could be a pool someone else made, with a looser provider that would skip the main-only condition.
+pool_id=mida-github
+pool=projects/$number/locations/global/workloadIdentityPools/$pool_id
 
 gcloud services enable iamcredentials.googleapis.com sts.googleapis.com --project "$project"
 
-gcloud iam workload-identity-pools describe github --project "$project" --location global > /dev/null 2>&1 ||
-  gcloud iam workload-identity-pools create github --project "$project" --location global --display-name GitHub
+gcloud iam workload-identity-pools describe "$pool_id" --project "$project" --location global > /dev/null 2>&1 ||
+  gcloud iam workload-identity-pools create "$pool_id" --project "$project" --location global --display-name "MIDA GitHub"
 # Only main's workflows: a pushed branch or a dispatch from one runs code nobody merged. And only these two events:
 # pull_request_target, workflow_run and issue_comment also carry main's ref, while a pull request sets them off.
-provider=(github --project "$project" --location global --workload-identity-pool github
+provider=(github --project "$project" --location global --workload-identity-pool "$pool_id"
   --attribute-mapping 'google.subject=assertion.sub,attribute.repository_id=assertion.repository_id'
   --attribute-condition "assertion.repository_id == '$repo_id' && assertion.ref == 'refs/heads/main' && (assertion.event_name == 'push' || assertion.event_name == 'workflow_dispatch')")
 if gcloud iam workload-identity-pools providers describe github --project "$project" --location global \
-  --workload-identity-pool github > /dev/null 2>&1; then
+  --workload-identity-pool "$pool_id" > /dev/null 2>&1; then
   gcloud iam workload-identity-pools providers update-oidc "${provider[@]}"
 else
   gcloud iam workload-identity-pools providers create-oidc "${provider[@]}" --issuer-uri https://token.actions.githubusercontent.com
