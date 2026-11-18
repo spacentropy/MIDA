@@ -46,7 +46,7 @@ public sealed partial class RealWorld : IDisposable
         mayFail: ["OrchardCore.Tests.Functional"]);
 
     /// <summary>
-    /// The Azure and Fabric MCP servers: 167 projects, none multi-targeted, and 156 test projects on xUnit v3 and
+    /// The Azure and Fabric MCP servers: 167 projects, none multi-targeted, and 80 test projects on xUnit v3 and
     /// Microsoft.Testing.Platform, most of them replaying recorded Azure calls.
     /// </summary>
     [Test]
