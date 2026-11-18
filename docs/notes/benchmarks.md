@@ -291,6 +291,8 @@ Its first runs found two mida bugs. A build-time reference to a project without 
 
 282 keys, 282 hits; 222 nodes without a key (219 multi-targeted, 3 that copy a file written outside their outputs) and 118 whose key could not be computed. Cache 1,063 MB. The run before, with the same code but the stricter comparison, gave 0.90 and 0.44.
 
+First run on GitHub Actions, 2026-11-18, `ubuntu-latest` x64, four processors, commit `68eef76`, all five real-world tests passed. Aspire: 476.1 s plain, 444.5 s empty (0.93), 215.8 s filled (0.45), the same counts as on macOS and the same files as `dotnet build`. In the same run: OrchardCore 0.10, Abp 0.80, OrchardCore's tests 0.08, mcp's tests 0.12, each with the key counts of the runs before, so the new rule took no keys there.
+
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 
 First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
