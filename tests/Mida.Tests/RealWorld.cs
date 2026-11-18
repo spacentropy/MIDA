@@ -43,7 +43,29 @@ public sealed partial class RealWorld : IDisposable
         "v3.0.1",
         "OrchardCore.slnx",
         // Needs a Playwright browser, which nothing here installs.
-        "OrchardCore.Tests.Functional");
+        mayFail: ["OrchardCore.Tests.Functional"]);
+
+    /// <summary>
+    /// The Azure and Fabric MCP servers: 167 projects, none multi-targeted, and 156 test projects on xUnit v3 and
+    /// Microsoft.Testing.Platform, most of them replaying recorded Azure calls.
+    /// </summary>
+    [Test]
+    public Task McpTests() => CompareTests(
+        "https://github.com/microsoft/mcp",
+        "Fabric.Mcp.Server-1.8.0",
+        "Microsoft.Mcp.slnx",
+        mayFail:
+        [
+            // Expects the commit in its informational version, which mida build leaves out.
+            "Azure.Mcp.Core.Tests",
+            // Their recordings come through the test proxy's git restore, which failed on macOS.
+            "Azure.Mcp.Tools.ResiliencyAgent.Tests",
+            "Azure.Mcp.Tools.Deploy.Tests",
+            // Needs pwsh.
+            "Azure.Mcp.Server.Tests",
+        ],
+        // CopilotCliTester downloads the Copilot CLI from an Azure DevOps feed that answers 401 outside Microsoft.
+        properties: ["-p:CopilotNpmRegistryUrl=https://registry.npmjs.org"]);
 
     private string Source(string url, string tag, string solution)
     {
@@ -58,15 +80,17 @@ public sealed partial class RealWorld : IDisposable
     /// <summary>
     /// dotnet test beside mida test with an empty cache, then mida test in a clean clone at another path with the cache
     /// filled, which must run only what failed before. Only the test projects in <paramref name="mayFail"/> may fail.
+    /// Every run gets <paramref name="properties"/>.
     /// </summary>
-    private async Task CompareTests(string url, string tag, string solution, string mayFail, [CallerMemberName] string name = "")
+    private async Task CompareTests(string url, string tag, string solution, string[] mayFail, string[]? properties = null, [CallerMemberName] string name = "")
     {
         var source = Source(url, tag, solution);
         var cache = Path.Combine(temp, "cache");
         var codes = new int[3];
-        var plain = Build(source, url, "plain", root => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable])));
-        var fresh = Build(source, url, "fresh", root => Exited(1, Benchmarks.RunMida(root, solution, cache, "test")));
-        var filled = Build(source, url, "some/deeper/path/filled", root => Exited(2, Benchmarks.RunMida(root, solution, cache, "test")));
+        properties ??= [];
+        var plain = Build(source, url, "plain", root => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable, .. properties])));
+        var fresh = Build(source, url, "fresh", root => Exited(1, Benchmarks.RunMida(root, solution, cache, "test", properties)));
+        var filled = Build(source, url, "some/deeper/path/filled", root => Exited(2, Benchmarks.RunMida(root, solution, cache, "test", properties)));
         var failures = fresh.Output.Split('\n').Where(l => l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList();
 
         var report = $"""
@@ -92,7 +116,7 @@ public sealed partial class RealWorld : IDisposable
         var (ran, failed, _) = Counts(fresh.Output);
         var (ranAgain, _, passedBefore) = Counts(filled.Output);
         await Assert.That(ran).IsGreaterThan(0);
-        await Assert.That(failures.Where(f => !f.Contains($"/{mayFail}.csproj", StringComparison.Ordinal))).IsEmpty();
+        await Assert.That(failures.Where(f => !mayFail.Any(m => f.Contains($"/{m}.csproj", StringComparison.Ordinal)))).IsEmpty();
         await Assert.That((ranAgain, passedBefore)).IsEqualTo((failed, ran - failed));
 
         string Exited(int index, (int ExitCode, string Output) run)

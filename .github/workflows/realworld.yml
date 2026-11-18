@@ -13,8 +13,8 @@ jobs:
       fail-fast: false
       matrix:
         # Tests of tests/Mida.Tests/RealWorld.cs. Each clones one repo at a pinned tag and builds it four times, or for
-        # OrchardCoreTests, tests it three times.
-        repo: [OrchardCore, Abp, OrchardCoreTests]
+        # OrchardCoreTests and McpTests, tests it three times.
+        repo: [OrchardCore, Abp, OrchardCoreTests, McpTests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,9 +27,13 @@ jobs:
       - run: |
           dotnet pack src/Mida -c Release -p:Version=0.0.0-realworld -o out
           dotnet tool install -g mida --version 0.0.0-realworld --add-source out --framework net11.0
+      # A built checkout of mcp is 26 GB, mostly packages copied into each test project's bin, so the checkouts go on
+      # the larger disk.
+      - run: sudo mkdir -p /mnt/tmp && sudo chown "$USER" /mnt/tmp && df -h / /mnt
       - run: dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/${{ matrix.repo }}" --output Detailed
         env:
           MIDA_BENCH_TOOL: mida
+          TMPDIR: /mnt/tmp
       - if: always()
         run: cat TestResults/realworld-*.md >> "$GITHUB_STEP_SUMMARY"
       - if: always()

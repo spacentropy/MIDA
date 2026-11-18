@@ -78,9 +78,9 @@ public sealed class Benchmarks : IDisposable
     private GeneratedRepo Generate(string name) => GeneratedRepo.Generate(Path.Combine(temp, name), Count);
 
     // CI names the packed tool it installed, which is what users run. Without one, the build beside the tests runs.
-    internal static (int ExitCode, string Output) RunMida(string root, string solution, string cache, string verb)
+    internal static (int ExitCode, string Output) RunMida(string root, string solution, string cache, string verb, params string[] arguments)
     {
-        string[] build = [verb, solution, "--cache", cache];
+        string[] build = [verb, solution, "--cache", cache, .. arguments];
         return Environment.GetEnvironmentVariable("MIDA_BENCH_TOOL") is { Length: > 0 } tool
             ? Start(tool, root, null, build)
             : Run(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), .. build]);
