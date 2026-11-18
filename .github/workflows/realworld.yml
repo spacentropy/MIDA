@@ -14,13 +14,13 @@ jobs:
       matrix:
         # Tests of tests/Mida.Tests/RealWorld.cs. Each clones one repo at a pinned tag and builds it four times, or for
         # OrchardCoreTests and McpTests, tests it three times.
-        repo: [OrchardCore, Abp, OrchardCoreTests, McpTests]
+        repo: [OrchardCore, Abp, Aspire, OrchardCoreTests, McpTests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
-          # Both repos target net10.0. Abp pins SDK 10, and OrchardCore rolls forward to the newest SDK installed.
+          # Abp and mcp pin SDK 10, OrchardCore rolls forward to the newest SDK installed, and Aspire pins 11.0.100.
           dotnet-version: 10.0.x
           global-json-file: global.json
       # The packed tool, installed the way a user installs it. On .NET 11, which loads either SDK.

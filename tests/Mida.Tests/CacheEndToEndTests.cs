@@ -184,6 +184,37 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsPass(clone);
     }
 
+    // As Aspire.Hosting.Blazor writes Gateway.cs: from a target, into obj/Debug/Scripts, outside obj/Debug/net10.0. A hit
+    // of LibB would leave it out, and LibA, which misses, would then fail to copy it.
+    [Test]
+    public async Task ProjectThatCopiesAFileItWritesOutsideItsOutputsIsBuilt()
+    {
+        string Writing(string relativePath)
+        {
+            var root = Checkout(relativePath);
+            // Where Aspire's comes to: Arcade sets IntermediateOutputPath early, and a property takes it before the SDK
+            // appends the framework.
+            Edit(root, "LibB/LibB.csproj", "</Project>", """
+                  <PropertyGroup><GenDir>$(BaseIntermediateOutputPath)$(Configuration)/Scripts/</GenDir></PropertyGroup>
+                  <ItemGroup><Content Include="$(GenDir)Gen.txt" CopyToOutputDirectory="PreserveNewest" Link="Scripts/Gen.txt" /></ItemGroup>
+                  <Target Name="WriteGen" BeforeTargets="CoreCompile;GetCopyToOutputDirectoryItems">
+                    <WriteLinesToFile File="$(GenDir)Gen.txt" Lines="gen" Overwrite="true" WriteOnlyWhenDifferent="true" />
+                  </Target>
+                </Project>
+                """);
+            return root;
+        }
+
+        Build(Writing("a"));
+        var clone = Writing("some deeper/path (b)");
+        Edit(clone, "LibA/A.cs", "=> LibB.B.Name();", "=> LibB.B.Name() + string.Empty;");
+        var output = Build(clone);
+
+        await Assert.That(output).Contains("1 nodes without a key: 1 copies a file it writes outside its outputs");
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "LibA", "bin", "Debug", "net10.0", "Scripts", "Gen.txt")).Trim()).IsEqualTo("gen");
+        await AssertTestsPass(clone);
+    }
+
     [Test]
     public async Task CloneOnAnotherMachineHitsThroughTheBucket()
     {

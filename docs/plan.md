@@ -69,7 +69,7 @@ tests/Mida.Tests/  TUnit on Microsoft.Testing.Platform (set in global.json)
 MIDA.slnx          All three projects
 .github/workflows/ ci.yml: tests on Linux, net10.0 and net11.0, on a hosted runner. release.yml: pack and push to nuget.org on a v* tag.
                    bench.yml: the benchmark scenarios on the packed tool, on a push to main, on the pool
-                   realworld.yml: OrchardCore and Abp, OrchardCore's and mcp's tests, when dispatched, on a hosted runner
+                   realworld.yml: OrchardCore, Abp and Aspire, OrchardCore's and mcp's tests, when dispatched, on a hosted runner
                    gcs.yml: the GCS tests against a real bucket, on a push to main, on the pool
 .github/actions/pool, scripts/pool.sh, cloudbuild.yaml
                    Run one command on a Cloud Build private pool and copy its TestResults back
@@ -244,7 +244,8 @@ In order. The first two are small and come before the milestone.
 4. **Multi-targeted projects**, steps 3 to 9 of [multi-targeting.md](notes/multi-targeting.md#plan). Abp builds 107 of its 270 projects five times each on every run, which is the difference between its 0.82 and OrchardCore's 0.10.
 5. **What a hit writes.** On the pool an all-hit run of the 1024-project repo keeps the processors 7% busy with 71% iowait: it waits on the disk. At 128 projects it writes 1.56 GB to restore 46 MB of blobs, mostly package files copied into every test project's `bin/`. Store files that come from a package as references to the package folder, like dependency copies, or hard-link from the local store. A write through a hard link would change the blob, so that one needs a guard.
 6. **What a miss costs.** A fresh `mida build` is 1.09 to 1.38 of a plain build, and used about 30% more CPU time on the generated repo. Not profiled.
-7. Smaller, when nearby: keep a manifest's paths under its project's `bin/` and `obj/` (4b), `Directory.Build.rsp` (4b), eviction of `~/.mida/cache`, a retry in `GcsStore`, a first run on Windows, the 2026-11-16 pool numbers as the benchmark's new baseline once a second run confirms them.
+7. **Files written outside the output directories.** Since 2026-11-18 a project that copies such a file to its output gets no key, a stopgap for Aspire's `Gateway.cs`: capture `obj/<configuration>/` instead, see [relocation.md](notes/relocation.md).
+8. Smaller, when nearby: keep a manifest's paths under its project's `bin/` and `obj/` (4b), `Directory.Build.rsp` (4b), eviction of `~/.mida/cache`, a retry in `GcsStore`, a first run on Windows, the 2026-11-16 pool numbers as the benchmark's new baseline once a second run confirms them.
 
 ## Known risks
 

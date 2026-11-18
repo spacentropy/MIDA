@@ -92,8 +92,10 @@ To run only the tests that have not passed, replace the last two steps with `mid
 
 - Projects that target several frameworks are not cached. They are built on every run and are in neither the hits nor the misses: a line such as `3 nodes without a key: 3 multi-targeted` counts them, one node per framework and one for the project. Their dependents are cached, and so is a project with one framework in `TargetFrameworks`.
 - A project that sets `GeneratePackageOnBuild` is not cached either, since a hit would not write its package. The same line counts it.
+- Nor, for now, is a project that copies to its output a file it writes into its own `bin/` or `obj/` outside the directories a hit restores, such as `obj/Debug/Scripts/`: `copies a file it writes outside its outputs`. See [docs/notes/relocation.md](docs/notes/relocation.md).
 - A Web or Razor SDK project with a static web asset outside the repo, the package folder, the .NET install and the user profile is not cached, and the build says why. Static web assets on Windows have not been tested.
 - Environment variables are not in the key.
+- In a repo on Microsoft's Arcade SDK, such as dotnet/aspire, set `NUGET_PACKAGES`. Under `ContinuousIntegrationBuild`, which mida sets, Arcade otherwise moves the package folder into the checkout.
 - Tools that stamp a version from git, such as MinVer, NBGV and GitVersion, cost the hits of every dependent whenever they change `AssemblyVersion`: MinVer on a major version, NBGV on a minor version and GitVersion on a patch by default. A hit can serve outputs stamped with an older version, which matters at pack and publish.
 
 ## Develop

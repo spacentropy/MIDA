@@ -185,8 +185,7 @@ internal static partial class GraphEvaluation
                     .Select(tokens.TokenizePath),
             ],
             project.GetPropertyValue("IsCrossTargetingBuild") == "true",
-            // Written by the user, in any case.
-            project.GetPropertyValue("GeneratePackageOnBuild").Equals("true", StringComparison.OrdinalIgnoreCase),
+            NoKey(project, predictions),
             // A Microsoft.Testing.Platform project also says IsTestProject, so that one is asked first.
             project.GetPropertyValue("IsTestingPlatformApplication").Equals("true", StringComparison.OrdinalIgnoreCase) ? "mtp"
                 : project.GetPropertyValue("IsTestProject").Equals("true", StringComparison.OrdinalIgnoreCase) ? "vstest"
@@ -205,6 +204,33 @@ internal static partial class GraphEvaluation
             [.. OwnCopies(project)],
             project.GetPropertyValue("NuGetPackageRoot") is { Length: > 0 } packages ? tokens.TokenizePath(packages) : null,
             Token(Absolute(project, "MSBuildProjectExtensionsPath")));
+    }
+
+    /// <summary>Why a project whose graph nodes would get keys must not, or null.</summary>
+    private static string? NoKey(ProjectInstance project, ProjectPredictions predictions)
+    {
+        // A hit writes no package. With TargetFrameworks pack runs in the outer build, which replays target results, and
+        // with TargetFramework the package goes to bin/<configuration>, outside the outputs a hit restores. An inner
+        // node stays without a key too: whether its hit suits the pack after it is not checked. See docs/notes/multi-targeting.md
+        // shortcut: every project that packs on build is built every time, store the package as an output when one costs too much.
+        // Written by the user, in any case.
+        if (project.GetPropertyValue("GeneratePackageOnBuild").Equals("true", StringComparison.OrdinalIgnoreCase))
+        {
+            return "packs on build";
+        }
+
+        // A file the build writes under bin/ or obj/ but outside the directories a hit restores, such as Aspire.Hosting.Blazor's
+        // obj/<configuration>/Scripts/Gateway.cs from a template, is missing after a hit, and a dependent's copy of it fails.
+        // shortcut: such a project is built every time, capture its whole configuration directory when one costs too much.
+        // See docs/notes/relocation.md
+        var roots = OwnedRootProperties.Select(p => Absolute(project, p)).OfType<string>().Select(KeyComputer.WithSeparator).ToList();
+        var outputs = predictions.OutputDirectories.Select(d => KeyComputer.AbsolutePath(project.Directory, d.Path)).OfType<string>().Select(KeyComputer.WithSeparator).ToList();
+        return project.Items
+            .Where(i => i.GetMetadataValue("CopyToOutputDirectory") is { Length: > 0 } copy && !copy.Equals("Never", StringComparison.OrdinalIgnoreCase))
+            .Select(i => i.GetMetadataValue("FullPath"))
+            .Any(f => roots.Any(r => f.StartsWith(r, KeyComputer.PathComparison)) && !outputs.Any(o => f.StartsWith(o, KeyComputer.PathComparison)))
+            ? "copies a file it writes outside its outputs"
+            : null;
     }
 
     private static string? Absolute(ProjectInstance project, string property) =>

@@ -188,12 +188,12 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
             {
                 // Its behaviour shapes this project's output, so its API alone says too little. Its key covers its own dependencies.
                 // Before the seen check: a normal reference reached earlier must not hide this edge.
-                lines.Add($"dependency-key {name} {dependencyKeys[name].Value}");
+                lines.Add($"dependency-key {name} {KeyOf(name)}");
 
                 // An outer node's key has only the API of its inner node, whose behaviour is what counts here.
                 lines.AddRange(dependency.References
                     .Where(inner => dependency.CrossTargeting && inner.Path == dependency.Path)
-                    .Select(inner => $"dependency-key {Name(inner)} {dependencyKeys[Name(inner)].Value}"));
+                    .Select(inner => $"dependency-key {Name(inner)} {KeyOf(Name(inner))}"));
                 continue;
             }
 
@@ -223,6 +223,11 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
 
             AddDependencies(dependency, lines, dependencyKeys, seen);
         }
+
+        // A multi-targeted project, or one whose key failed, has none, and then nothing stands for its behaviour.
+        string KeyOf(string name) => dependencyKeys.TryGetValue(name, out var key)
+            ? key.Value
+            : throw new InvalidOperationException($"its build-time reference {name} has no key");
     }
 
     private string ReferenceHash(ProjectModel project)

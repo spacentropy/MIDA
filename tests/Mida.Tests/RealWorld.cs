@@ -35,6 +35,25 @@ public sealed partial class RealWorld : IDisposable
     public Task Abp() => Compare("https://github.com/abpframework/abp", "10.7.1", "framework/Volo.Abp.slnx");
 
     /// <summary>
+    /// An Arcade repo: some 480 projects, 74 of them multi-targeted. Its own CI builds through eng/build.sh, but the
+    /// solution builds with dotnet build too.
+    /// </summary>
+    [Test]
+    public Task Aspire()
+    {
+        // Under ContinuousIntegrationBuild, which mida build sets, Arcade moves the package folder into the checkout
+        // unless NUGET_PACKAGES names one, and the build then misses what restore put in the default folder.
+        if (Environment.GetEnvironmentVariable("NUGET_PACKAGES") is null or "")
+        {
+            Environment.SetEnvironmentVariable("NUGET_PACKAGES", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages"));
+        }
+
+        // Aspire.ProjectTemplates runs tools/scripts/replace-text.cs from a target, and that file-based app builds into
+        // Arcade's artifacts/bin. It is no project's output, so a hit, which runs no target, leaves it out.
+        return Compare("https://github.com/dotnet/aspire", "v17.0.0", "Aspire.slnx", ignored: ["artifacts/bin/replace-text.cs/"]);
+    }
+
+    /// <summary>
     /// OrchardCore's tests, on xUnit v3 and Microsoft.Testing.Platform. Abp's are on VSTest, which mida test refuses.
     /// </summary>
     [Test]
@@ -137,14 +156,22 @@ public sealed partial class RealWorld : IDisposable
     [GeneratedRegex(@"(\d+) test projects run, (\d+) failed, (\d+) passed before")]
     private static partial Regex TestSummaryLine();
 
-    private async Task Compare(string url, string tag, string solution, [CallerMemberName] string name = "")
+    /// <summary>Files under <paramref name="ignored"/>, relative to the checkout, are not compared.</summary>
+    private async Task Compare(string url, string tag, string solution, string[]? ignored = null, [CallerMemberName] string name = "")
     {
         var source = Source(url, tag, solution);
 
         // Two plain builds at two paths: what differs between them is not mida's doing.
         var plain = Build(source, url, "plain", root => Dotnet(root, null, ["build", solution, .. Relocatable]));
         var again = Build(source, url, "other/plain", root => Dotnet(root, null, ["build", solution, .. Relocatable]));
-        var noise = Differences(plain.Files, again.Files).Select(d => d.File).ToHashSet(StringComparer.Ordinal);
+        var plainDifferences = Differences(plain.Files, again.Files);
+        var noise = plainDifferences.Select(d => d.File).ToHashSet(StringComparer.Ordinal);
+        // A name with a hash of its content, such as a fingerprinted .wasm, is another name in every build, so where names
+        // came and went between the plain builds, a file that comes or goes says nothing either.
+        var renamed = plainDifferences.Where(d => d.Kind != "differs").Select(d => Path.GetDirectoryName(d.File)).ToHashSet(StringComparer.Ordinal);
+        bool Compared((string Kind, string File) d) => !noise.Contains(d.File)
+            && !(d.Kind != "differs" && renamed.Contains(Path.GetDirectoryName(d.File)))
+            && !(ignored ?? []).Any(i => d.File.StartsWith(i, StringComparison.Ordinal));
 
         var cache = Path.Combine(temp, "cache");
         var fresh = Build(source, url, "fresh", root => Benchmarks.Mida(root, solution, cache));
@@ -152,8 +179,8 @@ public sealed partial class RealWorld : IDisposable
         var filled = Build(source, url, "some/deeper/path/filled", root => Benchmarks.Mida(root, solution, cache));
 
         var seconds = Math.Min(plain.Seconds, again.Seconds);
-        var freshDifferences = Differences(plain.Files, fresh.Files).Where(d => !noise.Contains(d.File)).ToList();
-        var filledDifferences = Differences(plain.Files, filled.Files).Where(d => !noise.Contains(d.File)).ToList();
+        var freshDifferences = Differences(plain.Files, fresh.Files).Where(Compared).ToList();
+        var filledDifferences = Differences(plain.Files, filled.Files).Where(Compared).ToList();
         var megabytes = Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1_000_000;
         var report = $"""
             | repo | dotnet build | mida build, empty cache | mida / dotnet | mida build, filled cache | mida / dotnet |
@@ -164,7 +191,7 @@ public sealed partial class RealWorld : IDisposable
 
             - Empty cache: {SummaryLines(fresh.Output)}
             - Filled cache: {SummaryLines(filled.Output)}
-            - {plain.Files.Count} files under bin. {noise.Count} of them differ between the two plain builds and are not compared{Kinds(Differences(plain.Files, again.Files))}
+            - {plain.Files.Count} files under bin. {noise.Count} of them differ between the two plain builds and are not compared{Kinds(plainDifferences)}{(ignored is { Length: > 0 } ? $" Not compared either: {string.Join(", ", ignored)}" : string.Empty)}
 
             {Section("Empty cache", freshDifferences)}
             {Section("Filled cache", filledDifferences)}

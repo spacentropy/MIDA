@@ -23,7 +23,7 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
 
     public bool CrossTargeting => stored.CrossTargeting;
 
-    public bool PacksOnBuild => stored.PacksOnBuild;
+    public string? NoKey => stored.NoKey;
 
     /// <summary>How a test project runs, as <see cref="SnapshotProject.Test"/> says. Null for any other project.</summary>
     public string? Test => stored.Test;
@@ -89,14 +89,11 @@ internal sealed class GraphModel
         {
             var outer = nodes.Count(p => p.CrossTargeting);
 
-            // A hit writes no package. With TargetFrameworks pack runs in the outer build, which replays target results, and
-            // with TargetFramework the package goes to bin/<configuration>, outside the outputs a hit restores. An inner
-            // node stays without a key too: whether its hit suits the pack after it is not checked. See docs/notes/multi-targeting.md
-            // shortcut: every project that packs on build is built every time, store the package as an output when one costs too much.
-            var why = nodes.Any(p => p.PacksOnBuild) ? "packs on build"
-                : nodes.Count == 1 || (nodes.Count == 2 && outer == 1 && nodes[0].TargetFramework != nodes[1].TargetFramework) ? null
+            // What the evaluation found first, such as "packs on build": see GraphEvaluation.NoKey.
+            var why = nodes.Select(p => p.NoKey).FirstOrDefault(n => n is not null)
+                ?? (nodes.Count == 1 || (nodes.Count == 2 && outer == 1 && nodes[0].TargetFramework != nodes[1].TargetFramework) ? null
                 : outer > 0 ? "multi-targeted"
-                : "built with several sets of properties";
+                : "built with several sets of properties");
             foreach (var node in nodes)
             {
                 if (why is null)

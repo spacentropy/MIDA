@@ -88,6 +88,20 @@ public sealed class KeyEndToEndTests : IDisposable
     }
 
     [Test]
+    public async Task BuildTimeReferenceWithoutAKeySaysWhy()
+    {
+        var root = Checkout("repo");
+        // Two frameworks give Gen no key, as Aspire.Hosting.Tasks has none for the tests that load it.
+        Write(root, "Gen/Gen.csproj", Project(string.Empty, "<LangVersion>latest</LangVersion>")
+            .Replace("<TargetFramework>net10.0</TargetFramework>", "<TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks>", StringComparison.Ordinal));
+
+        var output = Dotnet(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), "build", "Repo.slnx", "--cache", Path.Combine(temp, "cache")]);
+
+        await Assert.That(output).Contains("its build-time reference Gen/Gen.csproj has no key");
+        await Assert.That(output).Contains(" 2 not computable");
+    }
+
+    [Test]
     public async Task RestoreSeesTheInjectedProperties()
     {
         var root = Checkout("repo");
