@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -7,8 +6,8 @@ using static Mida.Tests.TestRepo;
 namespace Mida.Tests;
 
 /// <summary>
-/// Wall-clock runs of the scenarios in docs/notes/benchmarks.md, one per test, each beside a plain dotnet build of the
-/// same repo on the same machine. Never part of the suite:
+/// Wall-clock runs of the scenarios in docs/notes/benchmarks.md under BenchmarkDotNet, one per test, each beside a
+/// plain dotnet build of the same repo on the same machine. Never part of the suite:
 /// dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/Unchanged" --output Detailed
 /// MIDA_BENCH_COUNT is the number of projects, 128 unless set. .github/workflows/bench.yml runs them on the packed tool.
 /// </summary>
@@ -16,8 +15,8 @@ namespace Mida.Tests;
 [NotInParallel]
 public sealed class Benchmarks : IDisposable
 {
-    // The fastest of these counts: between single runs of one commit the ratio moved by 7%.
-    private const int Repeats = 3;
+    // Between single runs of one commit the ratio moved by 7%. MIDA_BENCH_ITERATIONS sets it.
+    internal static readonly int Iterations = int.Parse(Environment.GetEnvironmentVariable("MIDA_BENCH_ITERATIONS") ?? "3", CultureInfo.InvariantCulture);
 
     private const string UnknownCpu = "unknown CPU";
 
@@ -117,37 +116,51 @@ public sealed class Benchmarks : IDisposable
             Directory.Delete(writer.Root, recursive: true);
         }
 
-        var (plain, seconds, output, cache) = (double.MaxValue, double.MaxValue, string.Empty, filledCache);
-        var runs = new List<string>();
-        for (var i = 0; i < Repeats; i++)
-        {
-            // The same repo without mida, on the same machine: seconds differ between machines, the ratio to this far less.
-            var baseline = Generate("baseline");
-            var (plainSeconds, plainLoad) = Time(() => Dotnet(baseline.Root, null, plainArguments), out _);
-            Directory.Delete(baseline.Root, recursive: true);
-
-            // Its own copy of the cache, since a run with misses adds to it.
-            cache = Path.Combine(temp, $"cache{i}");
-            Copy(filledCache, cache);
-            var clone = Generate("some/deeper/path/b");
-            var missed = edit(clone);
-            var (midaSeconds, midaLoad) = Time(() => Mida(clone.Root, "Repo.slnx", cache, verb), out output);
-
-            // A run that hits or misses the wrong projects, or runs the wrong tests, has no time worth comparing.
-            await Assert.That(output).Contains($"{Count - missed.Count} hits, {missed.Count} misses");
-            if (verb == "test")
+        // The same repo without mida, on the same machine: seconds differ between machines, the ratio to this far less.
+        GeneratedRepo baseline = null!, clone = null!;
+        IReadOnlyCollection<GeneratedRepo.Project> missed = [];
+        var (cache, before, plainLoads) = (filledCache, Array.Empty<long>(), new List<string>());
+        var runs = new List<(string Output, string Load, string Expected, string? Tests)>();
+        var plainSide = new Side(
+            () => (baseline, before) = (Generate("baseline"), ShutDown()),
+            () => Dotnet(baseline.Root, null, plainArguments),
+            _ =>
+            {
+                plainLoads.Add(Load(before));
+                Directory.Delete(baseline.Root, recursive: true);
+            });
+        var midaSide = new Side(
+            () =>
+            {
+                // Its own copy of the cache, since a run with misses adds to it.
+                cache = Path.Combine(temp, $"cache{runs.Count}");
+                Copy(filledCache, cache);
+                clone = Generate("some/deeper/path/b");
+                missed = edit(clone);
+                before = ShutDown();
+            },
+            () => Mida(clone.Root, "Repo.slnx", cache, verb),
+            output =>
             {
                 var tests = clone.Projects.Count(p => p.IsTest);
                 var ran = clone.Dependents(missed).Count(p => p.IsTest);
-                await Assert.That(output).Contains(TestSummary(ran, 0, tests - ran));
+                runs.Add((output, Load(before), $"{Count - missed.Count} hits, {missed.Count} misses", verb == "test" ? TestSummary(ran, 0, tests - ran) : null));
+                Directory.Delete(clone.Root, recursive: true);
+            });
+        var timed = Timed.Run(Iterations, Path.Combine(temp, "BenchmarkDotNet"), plainSide, filled ? null : midaSide, filled ? midaSide : null);
+        var (plain, seconds, timings) = (timed.Plain, filled ? timed.Filled : timed.Empty, timed.Table);
+
+        // A run that hits or misses the wrong projects, or runs the wrong tests, has no time worth comparing.
+        foreach (var run in runs)
+        {
+            await Assert.That(run.Output).Contains(run.Expected);
+            if (run.Tests is not null)
+            {
+                await Assert.That(run.Output).Contains(run.Tests);
             }
-
-            Directory.Delete(clone.Root, recursive: true);
-
-            (plain, seconds) = (Math.Min(plain, plainSeconds), Math.Min(seconds, midaSeconds));
-            runs.Add($"| {i + 1} | {plainSeconds:F1} s | {plainLoad} | {midaSeconds:F1} s | {midaLoad} |");
         }
 
+        var output = runs[^1].Output;
         var ratio = seconds / plain;
         var cpu = Cpu();
         var path = Path.Combine(TestContext.ResultsDirectory, $"bench-{scenario}-{Count}");
@@ -172,11 +185,13 @@ public sealed class Benchmarks : IDisposable
             |---|---|---|---|---|---|---|
             | {scenario} | {Count} | {plain:F1} s | {seconds:F1} s | {ratio:F2} | {change} | {result} |
 
-            Fastest of {Repeats}, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors, {cpu}
+            Medians of {Iterations} runs under BenchmarkDotNet, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors, {cpu}
 
-            | run | dotnet {verb} | machine meanwhile | mida {verb} | machine meanwhile |
-            |---|---|---|---|---|
-            {string.Join('\n', runs)}
+            {timings}
+
+            | run | machine meanwhile, dotnet {verb} | machine meanwhile, mida {verb} |
+            |---|---|---|
+            {string.Join('\n', runs.Select((r, i) => $"| {i + 1} | {plainLoads[i]} | {r.Load} |"))}
 
             """;
         await File.WriteAllTextAsync(path + ".md", table);
@@ -185,14 +200,12 @@ public sealed class Benchmarks : IDisposable
         TestContext.Current!.Output.WriteLine($"{path}.md\n{table}");
     }
 
-    private (double Seconds, string Load) Time(Func<string> run, out string output)
+    /// <summary>The machine's ticks so far, for <see cref="Load"/>.</summary>
+    private long[] ShutDown()
     {
         // A CI runner starts with no build servers, and a compiler server left by the run before would flatter this one.
         Run(temp, null, "build-server", "shutdown");
-        var before = CpuTicks();
-        var watch = Stopwatch.StartNew();
-        output = run();
-        return (watch.Elapsed.TotalSeconds, Load(before));
+        return CpuTicks();
     }
 
     /// <summary>
@@ -223,7 +236,7 @@ public sealed class Benchmarks : IDisposable
         (File.Exists("/proc/cpuinfo") ? File.ReadLines("/proc/cpuinfo").FirstOrDefault(l => l.StartsWith("model name", StringComparison.Ordinal)) : null)
             ?.Split(':', 2)[1].Trim() ?? UnknownCpu;
 
-    private static void Copy(string source, string destination)
+    internal static void Copy(string source, string destination)
     {
         foreach (var file in Directory.Exists(source) ? Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories) : [])
         {

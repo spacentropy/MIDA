@@ -12,8 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Tests of tests/Mida.Tests/RealWorld.cs. Each clones one repo at a pinned tag and builds it four times, or for
-        # OrchardCoreTests and McpTests, tests it three times.
+        # Tests of tests/Mida.Tests/RealWorld.cs. Each clones one repo at a pinned tag and builds it, or for
+        # OrchardCoreTests and McpTests tests it, plain, with mida and an empty cache, and with a filled one, three
+        # times each under BenchmarkDotNet.
         repo: [OrchardCore, Abp, Aspire, OrchardCoreTests, McpTests]
     runs-on: ubuntu-latest
     steps:

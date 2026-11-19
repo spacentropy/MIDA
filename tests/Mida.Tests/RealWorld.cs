@@ -86,13 +86,130 @@ public sealed partial class RealWorld : IDisposable
         // CopilotCliTester downloads the Copilot CLI from an Azure DevOps feed that answers 401 outside Microsoft.
         properties: ["-p:CopilotNpmRegistryUrl=https://registry.npmjs.org"]);
 
+    /// <summary>
+    /// A checkout on this machine, cloned so its own tree is left alone: MIDA_LOCAL_REPO is its path, MIDA_LOCAL_SOLUTION
+    /// its solution, MIDA_LOCAL_BRANCH the branch, main by default.
+    /// </summary>
+    [Test]
+    public Task Local() => Compare(LocalRepo(), LocalBranch, LocalSolution);
+
+    /// <summary>The same checkout's tests. MIDA_LOCAL_MAYFAIL names the test projects that may fail, comma-separated.</summary>
+    [Test]
+    public Task LocalTests() => CompareTests(
+        LocalRepo(),
+        LocalBranch,
+        LocalSolution,
+        mayFail: Environment.GetEnvironmentVariable("MIDA_LOCAL_MAYFAIL")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? []);
+
+    /// <summary>
+    /// The same checkout with the cache filled, then edited in 1 or 10 of its projects, each edit in a clean clone beside
+    /// a plain build of it: a comment, which only the edited project must build again, or a public type, which its
+    /// dependents must too.
+    /// </summary>
+    [Test]
+    public async Task LocalEdits()
+    {
+        var url = LocalRepo();
+        var source = Source(url, LocalBranch, LocalSolution);
+        var filledCache = Path.Combine(temp, "cache");
+        var fill = Clone(source, url, "fill", (root, _) => Benchmarks.Mida(root, LocalSolution, filledCache));
+        fill.Before();
+        fill.After(fill.Run());
+
+        // The solution's projects without the tests, spread over it in path order.
+        var projects = SolutionProject().Matches(File.ReadAllText(Path.Combine(source, directory, LocalSolution)))
+            .Select(m => m.Groups[1].Value.Replace('\\', '/'))
+            .Where(p => !Path.GetFileName(p).Contains("test", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal)
+            .ToList();
+        var (rows, tables) = (new List<string>(), new List<string>());
+        foreach (var (scenario, count, api) in new[] { ("BodyEdit1", 1, false), ("BodyEdit10", 10, false), ("ApiEdit1", 1, true), ("ApiEdit10", 10, true) })
+        {
+            var edited = Enumerable.Range(0, count).Select(i => projects[(2 * i + 1) * projects.Count / (2 * count)]).ToList();
+            var output = string.Empty;
+            var timed = Timed.Run(
+                Benchmarks.Iterations,
+                Path.Combine(temp, "BenchmarkDotNet"),
+                Clone(source, url, $"{scenario}/plain", (root, _) => Dotnet(root, null, ["build", LocalSolution, .. Relocatable]), before: (root, _) => Edit(root)),
+                filledCache: Clone(
+                    source,
+                    url,
+                    $"{scenario}/mida",
+                    (root, i) => Benchmarks.Mida(root, LocalSolution, Cache(i)),
+                    after: (o, _) => output = o,
+                    // Its own copy of the cache, since a run with misses adds to it.
+                    before: (root, i) =>
+                    {
+                        Benchmarks.Copy(filledCache, Cache(i));
+                        Edit(root);
+                    }));
+            rows.Add($"| {scenario} | {string.Join(", ", edited.Select(Path.GetFileNameWithoutExtension))} | {timed.Plain:F1} s | {timed.Filled:F1} s | {timed.Filled / timed.Plain:F2} | {SummaryLines(output)} |");
+            tables.Add($"{scenario}:\n\n{timed.Table}");
+
+            string Cache(int iteration) => Path.Combine(temp, $"{scenario}-cache{iteration}");
+
+            void Edit(string root)
+            {
+                foreach (var project in edited.Select(p => Path.GetDirectoryName(Path.Combine(root, p))!))
+                {
+                    if (api)
+                    {
+                        File.WriteAllText(Path.Combine(project, $"Mida{scenario}.cs"), $"namespace MidaEdits;\n\npublic static class {scenario}\n{{\n    public const int Value = 1;\n}}\n");
+                    }
+                    else
+                    {
+                        var file = Directory.EnumerateFiles(project, "*.cs", SearchOption.AllDirectories)
+                            .Where(f => Path.GetRelativePath(project, f).Split(Path.DirectorySeparatorChar) is var parts && !parts.Contains("bin") && !parts.Contains("obj"))
+                            .Order(StringComparer.Ordinal)
+                            .First();
+                        File.AppendAllText(file, $"\n// {scenario}\n");
+                    }
+                }
+            }
+        }
+
+        var report = $"""
+            | scenario | edited projects | dotnet build | mida build, filled cache | mida / dotnet | mida, last run |
+            |---|---|---|---|---|---|
+            {string.Join('\n', rows)}
+
+            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+
+            {string.Join('\n', tables)}
+            """;
+        var path = Path.Combine(TestContext.ResultsDirectory, "realworld-LocalEdits.md");
+        await File.WriteAllTextAsync(path, report);
+        TestContext.Current!.Output.WriteLine($"{path}\n{report}");
+    }
+
+    [GeneratedRegex("Path=\"([^\"]+\\.csproj)\"")]
+    private static partial Regex SolutionProject();
+
+    private static string LocalBranch => Environment.GetEnvironmentVariable("MIDA_LOCAL_BRANCH") is { Length: > 0 } branch ? branch : "main";
+
+    private static string LocalSolution => Environment.GetEnvironmentVariable("MIDA_LOCAL_SOLUTION") ?? string.Empty;
+
+    // MIDA_LOCAL_REPO may be a folder inside the repo, where the solution and its global.json are, and every dotnet
+    // command runs there. file:// makes git honour --depth 1 for a path.
+    private string LocalRepo()
+    {
+        Skip.When(Environment.GetEnvironmentVariable("MIDA_LOCAL_REPO") is null or "" || LocalSolution is "", "Needs MIDA_LOCAL_REPO and MIDA_LOCAL_SOLUTION.");
+        var path = Path.GetFullPath(Environment.GetEnvironmentVariable("MIDA_LOCAL_REPO")!);
+        var top = Start("git", path, null, "rev-parse", "--show-toplevel").Output.Trim();
+        directory = Path.GetRelativePath(top, path);
+        return new Uri(top).AbsoluteUri;
+    }
+
+    // The folder of the checkout that dotnet commands run in.
+    private string directory = ".";
+
     private string Source(string url, string tag, string solution)
     {
         var source = Path.Combine(temp, "source");
         Git(temp, "clone", "--depth", "1", "--branch", tag, url, source);
 
         // Package downloads are not what is measured. Every build below is of its own clone, which this leaves nothing in.
-        Dotnet(source, null, "restore", solution);
+        Dotnet(Path.Combine(source, directory), null, "restore", solution);
         return source;
     }
 
@@ -104,39 +221,48 @@ public sealed partial class RealWorld : IDisposable
     private async Task CompareTests(string url, string tag, string solution, string[] mayFail, string[]? properties = null, [CallerMemberName] string name = "")
     {
         var source = Source(url, tag, solution);
-        var cache = Path.Combine(temp, "cache");
         var codes = new int[3];
+        var (plain, fresh, filled) = (new List<string>(), new List<string>(), new List<string>());
         properties ??= [];
-        var plain = Build(source, url, "plain", root => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable, .. properties])));
-        var fresh = Build(source, url, "fresh", root => Exited(1, Benchmarks.RunMida(root, solution, cache, "test", properties)));
-        var filled = Build(source, url, "some/deeper/path/filled", root => Exited(2, Benchmarks.RunMida(root, solution, cache, "test", properties)));
-        var failures = fresh.Output.Split('\n').Where(l => l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList();
+        var timed = Timed.Run(
+            Benchmarks.Iterations,
+            Path.Combine(temp, "BenchmarkDotNet"),
+            Clone(source, url, "plain", (root, _) => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable, .. properties])), after: (o, _) => plain.Add(o)),
+            Clone(source, url, "fresh", (root, i) => Exited(1, Benchmarks.RunMida(root, solution, Cache(i), "test", properties)), after: (o, _) => fresh.Add(o)),
+            Clone(source, url, "some/deeper/path/filled", (root, i) => Exited(2, Benchmarks.RunMida(root, solution, Filled(i), "test", properties)), after: (o, _) => filled.Add(o)));
+        var failures = fresh.Select(o => o.Split('\n').Where(l => l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList()).ToList();
 
         var report = $"""
             | repo | dotnet test | mida test, empty cache | mida / dotnet | mida test, filled cache | mida / dotnet |
             |---|---|---|---|---|---|
-            | {name} {tag} | {plain.Seconds:F1} s | {fresh.Seconds:F1} s | {fresh.Seconds / plain.Seconds:F2} | {filled.Seconds:F1} s | {filled.Seconds / plain.Seconds:F2} |
+            | {name} {tag} | {timed.Plain:F1} s | {timed.Empty:F1} s | {timed.Empty / timed.Plain:F2} | {timed.Filled:F1} s | {timed.Filled / timed.Plain:F2} |
 
-            Exit codes {codes[0]}, {codes[1]} and {codes[2]}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, last exit codes {codes[0]}, {codes[1]} and {codes[2]}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
-            - Empty cache: {SummaryLines(fresh.Output)}
-            - Filled cache: {SummaryLines(filled.Output)}
-            - Failed with the empty cache: {string.Join(", ", failures)}
+            - Empty cache, last run: {SummaryLines(fresh[^1])}
+            - Filled cache, last run: {SummaryLines(filled[^1])}
+            - Failed with the empty cache: {string.Join("; ", failures.Select((f, i) => $"run {i + 1}: {string.Join(", ", f)}"))}
+
+            {timed.Table}
             """;
         var path = Path.Combine(TestContext.ResultsDirectory, $"realworld-{name}");
         await File.WriteAllTextAsync(path + ".md", report);
 
         // The whole output, which holds a failed test project's own: the report is too short for it.
-        await File.WriteAllTextAsync(path + ".txt", fresh.Output);
-        await File.WriteAllTextAsync(path + ".plain.txt", plain.Output);
+        await File.WriteAllTextAsync(path + ".txt", string.Join("\n", fresh));
+        await File.WriteAllTextAsync(path + ".plain.txt", string.Join("\n", plain));
         TestContext.Current!.Output.WriteLine($"{path}.md\n{report}");
 
-        // What passed with the empty cache passes from the store; only what failed runs again.
-        var (ran, failed, _) = Counts(fresh.Output);
-        var (ranAgain, _, passedBefore) = Counts(filled.Output);
-        await Assert.That(ran).IsGreaterThan(0);
-        await Assert.That(failures.Where(f => !mayFail.Any(m => f.Contains($"/{m}.csproj", StringComparison.Ordinal)))).IsEmpty();
-        await Assert.That((ranAgain, passedBefore)).IsEqualTo((failed, ran - failed));
+        // What passed with the empty cache passes from the store; only what failed runs again. Each filled run reads the
+        // cache of the empty run before it, so a flaky test compares with its own run.
+        for (var i = 0; i < fresh.Count; i++)
+        {
+            var (ran, failed, _) = Counts(fresh[i]);
+            var (ranAgain, _, passedBefore) = Counts(filled[i]);
+            await Assert.That(ran).IsGreaterThan(0);
+            await Assert.That(failures[i].Where(f => !mayFail.Any(m => f.Contains($"/{m}.csproj", StringComparison.Ordinal)))).IsEmpty();
+            await Assert.That((ranAgain, passedBefore)).IsEqualTo((failed, ran - failed));
+        }
 
         string Exited(int index, (int ExitCode, string Output) run)
         {
@@ -144,6 +270,14 @@ public sealed partial class RealWorld : IDisposable
             return run.Output;
         }
     }
+
+    /// <summary>The cache that iteration <paramref name="iteration"/> of an empty-cache side fills.</summary>
+    private string Cache(int iteration) => Path.Combine(temp, $"cache{iteration}");
+
+    /// <summary>The same cache for the filled-cache side, which BenchmarkDotNet runs after the empty-cache one.</summary>
+    private string Filled(int iteration) => Directory.Exists(Cache(iteration))
+        ? Cache(iteration)
+        : throw new InvalidOperationException($"No empty-cache run filled {Cache(iteration)}");
 
     /// <summary>The numbers of the line that ends a mida test, or -1 each without one.</summary>
     private static (int Ran, int Failed, int PassedBefore) Counts(string output) =>
@@ -160,11 +294,18 @@ public sealed partial class RealWorld : IDisposable
     private async Task Compare(string url, string tag, string solution, string[]? ignored = null, [CallerMemberName] string name = "")
     {
         var source = Source(url, tag, solution);
+        var (plain, fresh, filled) = (new List<Dictionary<string, string>>(), new List<Dictionary<string, string>>(), new List<Dictionary<string, string>>());
+        var outputs = new string[2];
+        var timed = Timed.Run(
+            Benchmarks.Iterations,
+            Path.Combine(temp, "BenchmarkDotNet"),
+            Clone(source, url, "plain", (root, _) => Dotnet(root, null, ["build", solution, .. Relocatable]), after: (_, root) => plain.Add(Outputs(root))),
+            Clone(source, url, "fresh", (root, i) => outputs[0] = Benchmarks.Mida(root, solution, Cache(i)), after: (_, root) => fresh.Add(Outputs(root))),
+            // A clean clone at another path with the cache the build before filled, as a CI runner has it.
+            Clone(source, url, "some/deeper/path/filled", (root, i) => outputs[1] = Benchmarks.Mida(root, solution, Filled(i)), after: (_, root) => filled.Add(Outputs(root))));
 
-        // Two plain builds at two paths: what differs between them is not mida's doing.
-        var plain = Build(source, url, "plain", root => Dotnet(root, null, ["build", solution, .. Relocatable]));
-        var again = Build(source, url, "other/plain", root => Dotnet(root, null, ["build", solution, .. Relocatable]));
-        var plainDifferences = Differences(plain.Files, again.Files);
+        // Plain builds at several paths, one per iteration: what differs between them is not mida's doing.
+        var plainDifferences = plain.Skip(1).SelectMany(p => Differences(plain[0], p)).Distinct().ToList();
         var noise = plainDifferences.Select(d => d.File).ToHashSet(StringComparer.Ordinal);
         // A name with a hash of its content, such as a fingerprinted .wasm, is another name in every build, so where names
         // came and went between the plain builds, a file that comes or goes says nothing either.
@@ -173,28 +314,25 @@ public sealed partial class RealWorld : IDisposable
             && !(d.Kind != "differs" && renamed.Contains(Path.GetDirectoryName(d.File)))
             && !(ignored ?? []).Any(i => d.File.StartsWith(i, StringComparison.Ordinal));
 
-        var cache = Path.Combine(temp, "cache");
-        var fresh = Build(source, url, "fresh", root => Benchmarks.Mida(root, solution, cache));
-        // A clean clone at another path with the cache the build before filled, as a CI runner has it.
-        var filled = Build(source, url, "some/deeper/path/filled", root => Benchmarks.Mida(root, solution, cache));
-
-        var seconds = Math.Min(plain.Seconds, again.Seconds);
-        var freshDifferences = Differences(plain.Files, fresh.Files).Where(Compared).ToList();
-        var filledDifferences = Differences(plain.Files, filled.Files).Where(Compared).ToList();
-        var megabytes = Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1_000_000;
+        // Every mida run beside the first plain build.
+        var freshDifferences = fresh.SelectMany(f => Differences(plain[0], f)).Distinct().Where(Compared).ToList();
+        var filledDifferences = filled.SelectMany(f => Differences(plain[0], f)).Distinct().Where(Compared).ToList();
+        var megabytes = Directory.EnumerateFiles(Cache(0), "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) / 1_000_000;
         var report = $"""
             | repo | dotnet build | mida build, empty cache | mida / dotnet | mida build, filled cache | mida / dotnet |
             |---|---|---|---|---|---|
-            | {name} {tag} | {seconds:F1} s | {fresh.Seconds:F1} s | {fresh.Seconds / seconds:F2} | {filled.Seconds:F1} s | {filled.Seconds / seconds:F2} |
+            | {name} {tag} | {timed.Plain:F1} s | {timed.Empty:F1} s | {timed.Empty / timed.Plain:F2} | {timed.Filled:F1} s | {timed.Filled / timed.Plain:F2} |
 
-            The plain build is the faster of two ({plain.Seconds:F1} s and {again.Seconds:F1} s), cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
-            - Empty cache: {SummaryLines(fresh.Output)}
-            - Filled cache: {SummaryLines(filled.Output)}
-            - {plain.Files.Count} files under bin. {noise.Count} of them differ between the two plain builds and are not compared{Kinds(plainDifferences)}{(ignored is { Length: > 0 } ? $" Not compared either: {string.Join(", ", ignored)}" : string.Empty)}
+            - Empty cache, last run: {SummaryLines(outputs[0])}
+            - Filled cache, last run: {SummaryLines(outputs[1])}
+            - {plain[0].Count} files under bin. {noise.Count} of them differ between the {plain.Count} plain builds and are not compared{Kinds(plainDifferences)}{(ignored is { Length: > 0 } ? $" Not compared either: {string.Join(", ", ignored)}" : string.Empty)}
 
             {Section("Empty cache", freshDifferences)}
             {Section("Filled cache", filledDifferences)}
+
+            {timed.Table}
             """;
         var path = Path.Combine(TestContext.ResultsDirectory, $"realworld-{name}");
         await File.WriteAllTextAsync(path + ".md", report);
@@ -205,24 +343,34 @@ public sealed partial class RealWorld : IDisposable
         await Assert.That(filledDifferences).IsEmpty();
     }
 
-    /// <summary>Times <paramref name="build"/> in a clean clone at <paramref name="path"/> and returns the hash of every file it left under bin.</summary>
-    private (Dictionary<string, string> Files, double Seconds, string Output) Build(string source, string url, string path, Func<string, string> build)
+    /// <summary>
+    /// A side that runs <paramref name="build"/>, given the folder to run in and the iteration, in a clean clone at
+    /// <paramref name="path"/>, one folder deeper each iteration. <paramref name="before"/> gets that folder and
+    /// <paramref name="after"/> the output and the clone, both untimed.
+    /// </summary>
+    private Side Clone(string source, string url, string path, Func<string, int, string> build, Action<string, string>? after = null, Action<string, int>? before = null)
     {
-        var root = Path.Combine(temp, path);
-        Git(temp, "clone", source, root);
-        // SourceLink reads the origin, and a path on this machine is not a repo it knows.
-        Git(root, "remote", "set-url", "origin", url);
+        var (root, iteration) = (string.Empty, -1);
+        return new(
+            () =>
+            {
+                iteration++;
+                root = Path.Combine(temp, string.Concat(Enumerable.Repeat("other/", iteration)) + path);
+                Git(temp, "clone", source, root);
+                // SourceLink reads the origin, and a path on this machine is not a repo it knows.
+                Git(root, "remote", "set-url", "origin", url);
+                before?.Invoke(Path.Combine(root, directory), iteration);
 
-        // A CI runner starts with no build servers, and a compiler server left by the build before would flatter this one.
-        Run(temp, null, "build-server", "shutdown");
-        var watch = Stopwatch.StartNew();
-        var output = build(root);
-        var seconds = watch.Elapsed.TotalSeconds;
-
-        // A built checkout goes as soon as it is hashed: a hosted runner's disk does not hold four of them.
-        var files = Outputs(root);
-        Directory.Delete(root, recursive: true);
-        return (files, seconds, output);
+                // A CI runner starts with no build servers, and a compiler server left by the build before would flatter this one.
+                Run(temp, null, "build-server", "shutdown");
+            },
+            () => build(Path.Combine(root, directory), iteration),
+            output =>
+            {
+                // A built checkout goes as soon as it is used: a hosted runner's disk does not hold several of them.
+                after?.Invoke(output, root);
+                Directory.Delete(root, recursive: true);
+            });
     }
 
     private static Dictionary<string, string> Outputs(string root)
