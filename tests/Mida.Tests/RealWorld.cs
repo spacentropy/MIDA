@@ -261,6 +261,8 @@ public sealed partial class RealWorld : IDisposable
             - Filled cache, last run: {SummaryLines(filled[^1])}
             - Failed with the empty cache: {string.Join("; ", failures.Select((f, i) => $"run {i + 1}: {string.Join(", ", f)}"))}
 
+            {LoadTable("plain", "fresh", "some/deeper/path/filled")}
+
             {timed.Table}
             """;
         var path = Path.Combine(TestContext.ResultsDirectory, $"realworld-{name}");
@@ -354,6 +356,8 @@ public sealed partial class RealWorld : IDisposable
             {Section("Empty cache", freshDifferences)}
             {Section("Filled cache", filledDifferences)}
 
+            {LoadTable("plain", "fresh", "some/deeper/path/filled")}
+
             {timed.Table}
             """;
         var path = Path.Combine(TestContext.ResultsDirectory, $"realworld-{name}");
@@ -372,7 +376,7 @@ public sealed partial class RealWorld : IDisposable
     /// </summary>
     private Side Clone(string source, string url, string path, Func<string, int, string> build, Action<string, string>? after = null, Action<string, int>? before = null)
     {
-        var (root, iteration) = (string.Empty, -1);
+        var (root, iteration, ticks) = (string.Empty, -1, Array.Empty<long>());
         return new(
             () =>
             {
@@ -382,18 +386,27 @@ public sealed partial class RealWorld : IDisposable
                 // SourceLink reads the origin, and a path on this machine is not a repo it knows.
                 Git(root, "remote", "set-url", "origin", url);
                 before?.Invoke(Path.Combine(root, directory), iteration);
-
-                // A CI runner starts with no build servers, and a compiler server left by the build before would flatter this one.
-                Run(temp, null, "build-server", "shutdown");
+                ticks = Benchmarks.ShutDown(temp);
             },
             () => build(Path.Combine(root, directory), iteration),
             output =>
             {
+                Loads(path).Add(Benchmarks.Load(ticks));
                 // A built checkout goes as soon as it is used: a hosted runner's disk does not hold several of them.
                 after?.Invoke(output, root);
                 Directory.Delete(root, recursive: true);
             });
     }
+
+    // What the machine did during each run of the side at a path, which says whether the build used the processors or
+    // waited on the disk. Empty off Linux.
+    private readonly Dictionary<string, List<string>> loads = [];
+
+    private List<string> Loads(string path) => loads.TryGetValue(path, out var list) ? list : loads[path] = [];
+
+    private string LoadTable(params string[] paths) =>
+        $"| run | {string.Join(" | ", paths.Select(p => $"machine meanwhile, {Path.GetFileName(p)}"))} |\n|---|{string.Concat(paths.Select(_ => "---|"))}\n"
+        + string.Join('\n', Loads(paths[0]).Select((_, i) => $"| {i + 1} | {string.Join(" | ", paths.Select(p => Loads(p).ElementAtOrDefault(i)))} |"));
 
     private static Dictionary<string, string> Outputs(string root)
     {

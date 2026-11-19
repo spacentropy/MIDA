@@ -201,10 +201,12 @@ public sealed class Benchmarks : IDisposable
     }
 
     /// <summary>The machine's ticks so far, for <see cref="Load"/>.</summary>
-    private long[] ShutDown()
+    private long[] ShutDown() => ShutDown(temp);
+
+    internal static long[] ShutDown(string directory)
     {
         // A CI runner starts with no build servers, and a compiler server left by the run before would flatter this one.
-        Run(temp, null, "build-server", "shutdown");
+        Run(directory, null, "build-server", "shutdown");
         return CpuTicks();
     }
 
@@ -212,7 +214,7 @@ public sealed class Benchmarks : IDisposable
     /// What the whole machine did since <paramref name="before"/>, which tells a slow disk or a crowded host from slow
     /// code: on hosted runners one commit's Fresh ratio moved by 23%. Empty off Linux.
     /// </summary>
-    private static string Load(long[] before)
+    internal static string Load(long[] before)
     {
         if (before.Length == 0)
         {
