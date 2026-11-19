@@ -11,11 +11,7 @@ build=mida-build@$project.iam.gserviceaccount.com
 
 gcloud services enable cloudbuild.googleapis.com iam.googleapis.com --project "$project"
 
-gcloud builds worker-pools describe mida --project "$project" --region "$region" > /dev/null 2>&1 ||
-  gcloud builds worker-pools create mida --project "$project" --region "$region" \
-    --worker-machine-type c3-highcpu-22 --worker-disk-size 1000
-
-# Added 2026-11-19 to see what 8 processors change: the real-world builds kept 13 to 18 of 22 busy.
+# 8 processors, the machine mida is tuned for. A 22-processor pool, mida, ran until 2026-11-19: docs/notes/benchmarks.md.
 gcloud builds worker-pools describe mida-8 --project "$project" --region "$region" > /dev/null 2>&1 ||
   gcloud builds worker-pools create mida-8 --project "$project" --region "$region" \
     --worker-machine-type c3-highcpu-8 --worker-disk-size 1000

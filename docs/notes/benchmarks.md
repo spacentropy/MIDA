@@ -352,7 +352,7 @@ The same on a second pool, `mida-8`, c3-highcpu-8 workers with 8 processors and 
 - A run that restores much from the cache waits on the slower disk: the benchmark's `Unchanged` 86% in iowait, mcp's filled run 79%. Those ratios got worse, mcp's twice as bad. Where little is restored or much is rebuilt, the ratio barely moved.
 - An empty-cache build got relatively cheaper, since the plain build beside it waits on the disk too.
 - So on 8 processors the disk, not the processors, is what a hit needs.
-- Since 2026-11-19 `mida-8` is the default pool of `bench.yml`, `realworld.yml` and `scripts/pool.sh`, and the machine mida is tuned for: a small machine with a slow disk is closer to a developer's or a typical CI runner's than 22 processors, and it shows the cost of a hit instead of hiding it. The numbers above it are on `mida`, which stays for comparison.
+- Since 2026-11-19 `mida-8` is the only pool, and the machine mida is tuned for: a small machine with a slow disk is closer to a developer's or a typical CI runner's than 22 processors, and it shows the cost of a hit instead of hiding it. The numbers above it are on `mida`, the 22-processor pool, which was removed that day.
 
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 

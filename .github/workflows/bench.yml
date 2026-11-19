@@ -5,10 +5,6 @@ on:
     branches: [main]
     paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
-    inputs:
-      pool:
-        description: The worker pool, mida-8 with 8 processors, which mida is tuned for, or mida with 22.
-        default: mida-8
 
 permissions:
   contents: read
@@ -40,8 +36,6 @@ jobs:
         with:
           project: ${{ secrets.GCP_PROJECT }}
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          # A push has no inputs.
-          pool: ${{ inputs.pool || 'mida-8' }}
           run: |
             mkdir -p TestResults
             {
