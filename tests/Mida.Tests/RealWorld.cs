@@ -61,8 +61,14 @@ public sealed partial class RealWorld : IDisposable
         "https://github.com/OrchardCMS/OrchardCore",
         "v3.0.1",
         "OrchardCore.slnx",
-        // Needs a Playwright browser, which nothing here installs.
-        mayFail: ["OrchardCore.Tests.Functional"]);
+        mayFail:
+        [
+            // Needs a Playwright browser, which nothing here installs.
+            "OrchardCore.Tests.Functional",
+            // Flaky: DefaultPlacementIsReturnedByDefault failed in an earlier run on GitHub and passed on its rerun, and
+            // failed in 1 of 3 runs on 2026-11-19. Each filled run is still checked against its own empty run.
+            "OrchardCore.Tests",
+        ]);
 
     /// <summary>
     /// The Azure and Fabric MCP servers: 167 projects, none multi-targeted, and 80 test projects on xUnit v3 and

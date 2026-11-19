@@ -7,6 +7,9 @@ steps:
       # shortcut: downloads SDK 10 on every build, bake an image once the download shows in the timings.
       curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir /usr/share/dotnet
       export PATH="$PATH:$HOME/.dotnet/tools"
+      # The SDK image sets it to skip, so packages come without XML docs, and Aspire's build then fails: it compares
+      # ConfigurationSchema.json, made from those docs, with the one in its repo. A CI runner extracts them.
+      unset NUGET_XMLDOC_MODE
       # The GCS tests' bucket, made by scripts/pool-setup.sh.
       export MIDA_TEST_BUCKET="$PROJECT_ID-mida-test"
       # The next step keeps TestResults whatever this exits with, then exits with it.

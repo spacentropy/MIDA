@@ -3,6 +3,10 @@ name: Real world
 # Builds other people's repos, so it runs only when asked.
 on:
   workflow_dispatch:
+    inputs:
+      repos:
+        description: The tests to run, a JSON list.
+        default: '["OrchardCore", "Abp", "Aspire", "OrchardCoreTests", "McpTests"]'
 
 permissions:
   contents: read
@@ -17,7 +21,7 @@ jobs:
         # Tests of tests/Mida.Tests/RealWorld.cs. Each clones one repo at a pinned tag and builds it, or for
         # OrchardCoreTests and McpTests tests it, plain, with mida and an empty cache, and with a filled one, three
         # times each under BenchmarkDotNet.
-        repo: [OrchardCore, Abp, Aspire, OrchardCoreTests, McpTests]
+        repo: ${{ fromJSON(inputs.repos) }}
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.
