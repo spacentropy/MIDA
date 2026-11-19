@@ -354,6 +354,20 @@ The same on a second pool, `mida-8`, c3-highcpu-8 workers with 8 processors and 
 - So on 8 processors the disk, not the processors, is what a hit needs.
 - Since 2026-11-19 `mida-8` is the only pool, and the machine mida is tuned for: a small machine with a slow disk is closer to a developer's or a typical CI runner's than 22 processors, and it shows the cost of a hit instead of hiding it. The numbers above it are on `mida`, the 22-processor pool, which was removed that day.
 
+The baseline on `mida-8` to optimize from, 2026-11-19, commit `63f697b`, benchmark run 44581954505 and real-world run 44581954603, every test passed, the empty-cache builds left the same files as `dotnet build`. Ratios are mida over plain:
+
+| test | plain | mida, empty cache | mida, filled cache |
+|---|---|---|---|
+| Benchmark Fresh / Unchanged / BodyEdit / ApiEdit | 111.6 to 112.6 s | 0.91 | 0.48 / 0.59 / 0.62 |
+| Benchmark TestFresh / TestUnchanged / TestBodyEdit / TestApiEdit | 120.7 to 124.7 s | 1.11 | 0.44 / 0.53 / 0.59 |
+| Aspire | 395.0 s | 0.89 | 0.43 |
+| Abp | 72.1 s | 1.47 | 0.87 |
+| OrchardCore | 127.7 s | 1.06 | 0.10 |
+| OrchardCoreTests | 176.0 s | 1.01 | 0.08 |
+| McpTests | 432.0 s | 1.06 | 0.26 |
+
+Every ratio is within 0.04 of the first run on `mida-8` above, except Aspire's empty cache, 0.89 against 0.97, whose plain build took 395.0 s against 377.6 s.
+
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 
 First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
