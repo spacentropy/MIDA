@@ -315,6 +315,21 @@ First runs on the Cloud Build pool, 2026-11-19, Ubuntu 26.04 x64, 22 processors,
 - Aspire has 539 files that differ between its three plain builds, 322 of them DLLs. They are not compared, so a file mida got wrong among them would not show.
 - With 22 processors a plain build is 2 to 3 times faster than on a hosted runner and a hit is not, as for the benchmark above, so these ratios do not compare with the hosted runners'.
 
+How busy the 22 processors were, the same day, commit `ae0c7f2`, run 44531779329, in which all five passed again with ratios within 0.06 of the table above. Each is the range over the three runs of a side, as the share of all processors busy and in iowait:
+
+| test | plain | mida, empty cache | mida, filled cache |
+|---|---|---|---|
+| Aspire | 80 to 84%, 0 to 2% | 84 to 87%, 0% | 72 to 74%, 2 to 3% |
+| Abp | 59 to 73%, 1 to 2% | 72 to 74%, 0% | 82%, 0% |
+| OrchardCore | 68 to 74%, 1% | 69 to 70%, 0 to 1% | 29 to 31%, 4 to 5% |
+| OrchardCoreTests | 57 to 59%, 0 to 1% | 57 to 59%, 0 to 1% | 27 to 28%, 1 to 4% |
+| McpTests | 20 to 24%, 4 to 6% | 21 to 24%, 5 to 6% | 5%, 43 to 47% |
+
+- A plain build of a large repo keeps 13 to 18 of the 22 busy on average, and mida with an empty cache the same, so neither saturates the machine and both would slow on fewer.
+- With a filled cache, what is left decides. Aspire and Abp rebuild their multi-targeted projects, so they stay CPU-bound. OrchardCore, which hits everywhere, uses 6 or 7 processors. mcp's filled run waits on the disk, as the benchmark's hits do.
+- mcp's tests keep only about 5 processors busy under either runner: they wait on the test proxy and on replayed calls, not on the CPU.
+- These are averages over a run, which hide peaks and stretches on one processor.
+
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 
 First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
