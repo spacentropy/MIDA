@@ -105,6 +105,8 @@ The first run on the pool, 2026-11-16, commit `8dd187e`: Ubuntu 26.04 x64, 22 pr
 - The ratios do not compare with the hosted runners': with 22 processors the plain build is 2.5 times faster, and a run of hits is not, because it waits on the disk. `Unchanged` keeps the processors 7% busy. So this run is the pool's baseline, and the next one is the first that says something about a commit.
 - `Unchanged` on a hosted runner went from 0.71 on 2026-11-10 to 0.28 on 2026-11-14, on the same CPU model. That is the stored graph and the changes of 2026-11-11.
 
+The first run under BenchmarkDotNet, 2026-11-19, commit `d1a6a0c`, same pool, medians of 3, beside the last run's fastest of three: Fresh 1.15 (1.18), Unchanged 0.37 (0.37), BodyEdit 0.52 (0.52), ApiEdit 0.59 (0.58), TestFresh 1.33 (1.30), TestUnchanged 0.32 (0.32), TestBodyEdit 0.48 (0.53), TestApiEdit 0.52 (0.54). Six moved by 2% or less, so the change of method moved little. That commit also unset `NUGET_XMLDOC_MODE` on the pool, so restore extracts XML docs since.
+
 ## Numbers
 
 These tables predate the method above: one iteration, build servers left warm, and both edits made in one checkout after its hit.
@@ -295,6 +297,23 @@ Its first runs found two mida bugs. A build-time reference to a project without 
 282 keys, 282 hits; 222 nodes without a key (219 multi-targeted, 3 that copy a file written outside their outputs) and 118 whose key could not be computed. Cache 1,063 MB. The run before, with the same code but the stricter comparison, gave 0.90 and 0.44.
 
 First run on GitHub Actions, 2026-11-18, `ubuntu-latest` x64, four processors, commit `68eef76`, all five real-world tests passed. Aspire: 476.1 s plain, 444.5 s empty (0.93), 215.8 s filled (0.45), the same counts as on macOS and the same files as `dotnet build`. In the same run: OrchardCore 0.10, Abp 0.80, OrchardCore's tests 0.08, mcp's tests 0.12, each with the key counts of the runs before, so the new rule took no keys there.
+
+First runs on the Cloud Build pool, 2026-11-19, Ubuntu 26.04 x64, 22 processors, the medians of 3 runs under BenchmarkDotNet, every test passed:
+
+| test | commit | plain | mida, empty cache | mida / plain | mida, filled cache | mida / plain |
+|---|---|---|---|---|---|---|
+| OrchardCore | `296b218` | 65.0 s | 70.7 s | 1.09 | 7.8 s | 0.12 |
+| Abp | `296b218` | 41.3 s | 61.4 s | 1.49 | 32.0 s | 0.77 |
+| Aspire | `7f12fd1` | 203.1 s | 208.6 s | 1.03 | 96.9 s | 0.48 |
+| OrchardCoreTests | `d1a6a0c` | 101.3 s | 101.7 s | 1.00 | 9.4 s | 0.09 |
+| McpTests | `0882a70` | 327.3 s | 344.0 s | 1.05 | 41.4 s | 0.13 |
+
+- Every mida build left the same files under `bin` as `dotnet build`, and every filled `mida test` ran only what had failed with the empty cache: 1 of mcp's 80 test projects.
+- The key counts match the runs before: Aspire 282 keys and 282 hits, with 219 multi-targeted nodes, 3 under the copies rule and 118 not computable.
+- Getting there took four fixes, none of them in mida. The SDK image sets `NUGET_XMLDOC_MODE=skip`, which failed Aspire's `ConfigurationSchema.json` check, so `cloudbuild.yaml` unsets it. Aspire's playground references `Aspire.Hosting.Analyzers` with `TargetFramework=netstandard2.0` and the solution without, so plain `dotnet build` built it twice at once, and 2 of 4 plain builds on 22 processors failed on its `deps.json`: the test passes `SkipAspireHostingAnalyzersReference=true` to every build. mcp's test proxy prints "restore failed with exit code 1", which counted as a failed project until only mida's lines counted. And `scripts/pool.sh` reads the build's status every 30 s, since `gcloud builds log --stream` asks every second and 14 jobs at once passed the project's 600 requests a minute.
+- On the pool, git in `Azure.Mcp.Tools.VirtualDesktop.Tests` could not reach github.com for 131 s in all three mida runs with an empty cache and in none of the plain ones, so it may fail. Whether `mida test` running more test projects at once than `dotnet test` brought that on is not checked.
+- Aspire has 539 files that differ between its three plain builds, 322 of them DLLs. They are not compared, so a file mida got wrong among them would not show.
+- With 22 processors a plain build is 2 to 3 times faster than on a hosted runner and a hit is not, as for the benchmark above, so these ratios do not compare with the hosted runners'.
 
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 
