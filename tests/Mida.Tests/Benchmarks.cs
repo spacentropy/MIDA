@@ -85,9 +85,9 @@ public sealed class Benchmarks : IDisposable
             : Run(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), .. build]);
     }
 
-    internal static string Mida(string root, string solution, string cache, string verb = "build")
+    internal static string Mida(string root, string solution, string cache, string verb = "build", params string[] arguments)
     {
-        var (exitCode, output) = RunMida(root, solution, cache, verb);
+        var (exitCode, output) = RunMida(root, solution, cache, verb, arguments);
         if (exitCode != 0)
         {
             Assert.Fail(output);

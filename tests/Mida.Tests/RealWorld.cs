@@ -50,7 +50,15 @@ public sealed partial class RealWorld : IDisposable
 
         // Aspire.ProjectTemplates runs tools/scripts/replace-text.cs from a target, and that file-based app builds into
         // Arcade's artifacts/bin. It is no project's output, so a hit, which runs no target, leaves it out.
-        return Compare("https://github.com/dotnet/aspire", "v17.0.0", "Aspire.slnx", ignored: ["artifacts/bin/replace-text.cs/"]);
+        return Compare(
+            "https://github.com/dotnet/aspire",
+            "v17.0.0",
+            "Aspire.slnx",
+            ignored: ["artifacts/bin/replace-text.cs/"],
+            // The playground's AppHosts reference Aspire.Hosting.Analyzers with TargetFramework=netstandard2.0 and the
+            // solution without, so plain dotnet build built it twice at once, and on the pool's 22 processors 2 of 4
+            // builds failed on its deps.json. This drops the playground's reference.
+            properties: ["-p:SkipAspireHostingAnalyzersReference=true"]);
     }
 
     /// <summary>
@@ -300,19 +308,23 @@ public sealed partial class RealWorld : IDisposable
     [GeneratedRegex(@"(\d+) test projects run, (\d+) failed, (\d+) passed before")]
     private static partial Regex TestSummaryLine();
 
-    /// <summary>Files under <paramref name="ignored"/>, relative to the checkout, are not compared.</summary>
-    private async Task Compare(string url, string tag, string solution, string[]? ignored = null, [CallerMemberName] string name = "")
+    /// <summary>
+    /// Files under <paramref name="ignored"/>, relative to the checkout, are not compared. Every build gets
+    /// <paramref name="properties"/>.
+    /// </summary>
+    private async Task Compare(string url, string tag, string solution, string[]? ignored = null, string[]? properties = null, [CallerMemberName] string name = "")
     {
         var source = Source(url, tag, solution);
         var (plain, fresh, filled) = (new List<Dictionary<string, string>>(), new List<Dictionary<string, string>>(), new List<Dictionary<string, string>>());
         var outputs = new string[2];
+        properties ??= [];
         var timed = Timed.Run(
             Benchmarks.Iterations,
             Path.Combine(temp, "BenchmarkDotNet"),
-            Clone(source, url, "plain", (root, _) => Dotnet(root, null, ["build", solution, .. Relocatable]), after: (_, root) => plain.Add(Outputs(root))),
-            Clone(source, url, "fresh", (root, i) => outputs[0] = Benchmarks.Mida(root, solution, Cache(i)), after: (_, root) => fresh.Add(Outputs(root))),
+            Clone(source, url, "plain", (root, _) => Dotnet(root, null, ["build", solution, .. Relocatable, .. properties]), after: (_, root) => plain.Add(Outputs(root))),
+            Clone(source, url, "fresh", (root, i) => outputs[0] = Benchmarks.Mida(root, solution, Cache(i), "build", properties), after: (_, root) => fresh.Add(Outputs(root))),
             // A clean clone at another path with the cache the build before filled, as a CI runner has it.
-            Clone(source, url, "some/deeper/path/filled", (root, i) => outputs[1] = Benchmarks.Mida(root, solution, Filled(i)), after: (_, root) => filled.Add(Outputs(root))));
+            Clone(source, url, "some/deeper/path/filled", (root, i) => outputs[1] = Benchmarks.Mida(root, solution, Filled(i), "build", properties), after: (_, root) => filled.Add(Outputs(root))));
 
         // Plain builds at several paths, one per iteration: what differs between them is not mida's doing.
         var plainDifferences = plain.Skip(1).SelectMany(p => Differences(plain[0], p)).Distinct().ToList();
