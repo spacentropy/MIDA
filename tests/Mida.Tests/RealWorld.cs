@@ -86,6 +86,9 @@ public sealed partial class RealWorld : IDisposable
             // Their recordings come through the test proxy's git restore, which failed on macOS.
             "Azure.Mcp.Tools.ResiliencyAgent.Tests",
             "Azure.Mcp.Tools.Deploy.Tests",
+            // The same restore from the pool, 2026-11-19, in all three mida runs and not under dotnet test: git could not
+            // reach github.com for 131 s.
+            "Azure.Mcp.Tools.VirtualDesktop.Tests",
             // Needs pwsh.
             "Azure.Mcp.Server.Tests",
         ],
@@ -236,7 +239,8 @@ public sealed partial class RealWorld : IDisposable
             Clone(source, url, "plain", (root, _) => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable, .. properties])), after: (o, _) => plain.Add(o)),
             Clone(source, url, "fresh", (root, i) => Exited(1, Benchmarks.RunMida(root, solution, Cache(i), "test", properties)), after: (o, _) => fresh.Add(o)),
             Clone(source, url, "some/deeper/path/filled", (root, i) => Exited(2, Benchmarks.RunMida(root, solution, Filled(i), "test", properties)), after: (o, _) => filled.Add(o)));
-        var failures = fresh.Select(o => o.Split('\n').Where(l => l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList()).ToList();
+        // mida's own line, not a test's message that says the same, such as mcp's "Test proxy restore failed with exit code 1".
+        var failures = fresh.Select(o => o.Split('\n').Where(l => l.Contains("mida: ", StringComparison.Ordinal) && l.Contains(".csproj", StringComparison.Ordinal) && l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList()).ToList();
 
         var report = $"""
             | repo | dotnet test | mida test, empty cache | mida / dotnet | mida test, filled cache | mida / dotnet |
