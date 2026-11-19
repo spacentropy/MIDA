@@ -26,6 +26,14 @@ internal static class Program
 
     private static int Run(BuildOptions options)
     {
+        // For every process mida starts: NuGet's restore, the worker nodes and the compiler server, which a CI build starts cold.
+        // Without PGO's instrumented tier, Abp on the 8-processor pool restored in 11.8 s, not 21.4 s, and built in 60.1 s, not
+        // 74.5 s. A value the user set stays. See docs/notes/benchmarks.md
+        if (Environment.GetEnvironmentVariable("DOTNET_TieredPGO") is null)
+        {
+            Environment.SetEnvironmentVariable("DOTNET_TieredPGO", "0");
+        }
+
         var sdk = MSBuildLocator.RegisterDefaults();
         // The folder name keeps the prerelease label that sdk.Version, a System.Version, drops.
         var version = Path.GetFileName(Path.TrimEndingDirectorySeparator(sdk.MSBuildPath));
