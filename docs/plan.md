@@ -71,6 +71,7 @@ MIDA.slnx          All three projects
                    bench.yml: the benchmark scenarios on the packed tool, on a push to main, on the pool
                    realworld.yml: OrchardCore, Abp and Aspire, OrchardCore's and mcp's tests, when dispatched, on the pool since 2026-11-19
                    gcs.yml: the GCS tests against a real bucket, on a push to main, on the pool
+.github/dependabot.yml  Weekly updates of packages, the SDK and the pinned actions, each release a week old. Not the MSBuild packages, whose pins move by hand
 .github/actions/pool, scripts/pool.sh, cloudbuild.yaml
                    Run one command on a Cloud Build private pool and copy its TestResults back
 scripts/pool-setup.sh, scripts/pool-github.sh

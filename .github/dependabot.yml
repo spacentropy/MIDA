@@ -1,0 +1,36 @@
+# Weekly pull requests for packages, the SDK in global.json and the pinned actions, one per ecosystem. A release must be
+# a week old first: a bad one is usually pulled within days, and a merged update runs in jobs that sign in to Google
+# Cloud. Security updates do not wait.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      packages:
+        patterns: ["*"]
+    ignore:
+      # One property holds two pins, and the net10.0 one must stay: see MidaMSBuildVersion in Directory.Packages.props.
+      - dependency-name: Microsoft.Build
+      - dependency-name: Microsoft.Build.Framework
+      - dependency-name: Microsoft.Build.Utilities.Core
+      - dependency-name: Microsoft.NET.StringTools
+  - package-ecosystem: dotnet-sdk
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  # Dependabot moves each commit pin and the version comment beside it.
+  - package-ecosystem: github-actions
+    directories: ["/", "/.github/actions/*"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
