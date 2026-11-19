@@ -11,6 +11,9 @@ inputs:
   workload-identity-provider:
     description: The GCP_WORKLOAD_IDENTITY_PROVIDER secret, made by scripts/pool-github.sh.
     required: true
+  timeout:
+    description: How long the build may run, such as 1800s.
+    default: 1800s
 
 runs:
   using: composite
@@ -27,7 +30,8 @@ runs:
         service_account: mida-ci@${{ inputs.project }}.iam.gserviceaccount.com
     # gcloud is on GitHub's Ubuntu runners.
     - shell: bash
-      run: scripts/pool.sh "$PROJECT" europe-west4 "$RUN"
+      run: scripts/pool.sh "$PROJECT" europe-west4 "$RUN" "$TIMEOUT"
       env:
         PROJECT: ${{ inputs.project }}
         RUN: ${{ inputs.run }}
+        TIMEOUT: ${{ inputs.timeout }}

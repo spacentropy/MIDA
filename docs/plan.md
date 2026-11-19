@@ -69,7 +69,7 @@ tests/Mida.Tests/  TUnit on Microsoft.Testing.Platform (set in global.json)
 MIDA.slnx          All three projects
 .github/workflows/ ci.yml: tests on Linux, net10.0 and net11.0, on a hosted runner. release.yml: pack and push to nuget.org on a v* tag.
                    bench.yml: the benchmark scenarios on the packed tool, on a push to main, on the pool
-                   realworld.yml: OrchardCore, Abp and Aspire, OrchardCore's and mcp's tests, when dispatched, on a hosted runner
+                   realworld.yml: OrchardCore, Abp and Aspire, OrchardCore's and mcp's tests, when dispatched, on the pool since 2026-11-19
                    gcs.yml: the GCS tests against a real bucket, on a push to main, on the pool
 .github/actions/pool, scripts/pool.sh, cloudbuild.yaml
                    Run one command on a Cloud Build private pool and copy its TestResults back

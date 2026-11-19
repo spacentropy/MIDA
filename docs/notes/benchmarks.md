@@ -246,7 +246,7 @@ The last row reverses the plan's "Restore: not cached". Restore outputs hold abs
 
 ## Real-world repos
 
-Built and first run 2026-11-11: `tests/Mida.Tests/RealWorld.cs` (`[Explicit]`) and `.github/workflows/realworld.yml`, which runs only when dispatched. One test per repo, each a pinned tag:
+Built and first run 2026-11-11: `tests/Mida.Tests/RealWorld.cs` (`[Explicit]`) and `.github/workflows/realworld.yml`, which runs only when dispatched: on GitHub's hosted runners until 2026-11-19, on the Cloud Build pool since, with a 3-hour limit per job. The pool's account can reach only the two buckets in `scripts/pool-setup.sh`, so the other people's code these jobs build could at worst touch other builds' logs and results there. One test per repo, each a pinned tag:
 
 | test | repo | tag | solution | projects | SDK its `global.json` selects |
 |---|---|---|---|---|---|

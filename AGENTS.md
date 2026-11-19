@@ -1,5 +1,9 @@
 # Rules for agents
 
+## Where things run
+
+- GitHub-hosted runners only build releases (`release.yml`), run the tests (`ci.yml`) and do chores: submitting a job to the Cloud Build pool and collecting what it leaves, code scanning, uploading artifacts. Everything heavier runs on the pool through `.github/actions/pool`.
+
 ## Benchmarks
 
 - Every benchmarking run, meaning any run whose times are reported, compared or written into the docs, runs on Google Cloud Build, through the pool in `.github/actions/pool`, as `.github/workflows/bench.yml` does. Times are taken with BenchmarkDotNet (`tests/Mida.Tests/Timed.cs`).
