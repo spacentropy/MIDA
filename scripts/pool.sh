@@ -27,13 +27,29 @@ id=$(gcloud builds submit "${where[@]}" --async --format 'value(id)' --timeout "
   --gcs-source-staging-dir "gs://$project-mida-builds/source" --gcs-log-dir "gs://$project-mida-builds/logs" \
   --substitutions "^~~^_RUN=$run" .)
 
-# A cancelled job or Ctrl-C cancels the build, which would otherwise run on for up to an hour.
+# A cancelled job or Ctrl-C cancels the build, which would otherwise run on until its timeout.
 trap 'gcloud builds cancel "$id" "${where[@]}" > /dev/null' INT TERM
-# The stream can drop while the build runs on, so the build's status decides. In the background so the trap runs at once.
-gcloud builds log --stream "$id" "${where[@]}" & wait $! || true
+
+# Not gcloud builds log --stream: it asks for the build every second, and 14 jobs at once passed the project's 600
+# requests a minute. Here the status is read every 30 s, and the log from the bucket, which has no such quota.
+log="gs://$project-mida-builds/logs/log-$id.txt"
+chunk=$(mktemp)
+offset=0
+while true; do
+  # Read before the log, so the last pass prints what the build wrote before it ended. A failed read waits and retries.
+  status=$(gcloud builds describe "$id" "${where[@]}" --format 'value(status)' 2> /dev/null || echo STATUS_UNKNOWN)
+  # Fails until the log exists and when nothing is new.
+  if gcloud storage cat --range "$offset-" "$log" > "$chunk" 2> /dev/null; then
+    cat "$chunk"
+    offset=$((offset + $(wc -c < "$chunk")))
+  fi
+  case $status in
+    PENDING | QUEUED | WORKING | STATUS_UNKNOWN) sleep 30 & wait $! ;;
+    *) break ;;
+  esac
+done
 
 # Absent when the build failed before its tests, and gcloud's error then would only confuse.
 gcloud storage cp -r "gs://$project-mida-builds/results/$id/TestResults" . 2> /dev/null || true
-status=$(gcloud builds describe "$id" "${where[@]}" --format 'value(status)')
 echo "Build $status"
 [ "$status" = SUCCESS ]

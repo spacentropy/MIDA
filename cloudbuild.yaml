@@ -20,6 +20,9 @@ steps:
       fi
       exit "$(cat .exit-code 2> /dev/null || echo 0)"
 # No timeout here: scripts/pool.sh passes one for each job.
+# A push and a real-world dispatch queue some 14 builds, more than the pool runs at once, and a build waits for a
+# worker for an hour by default. Five hours, under the six a GitHub job may wait for it.
+queueTtl: 18000s
 options:
   # Puts _RUN, PROJECT_ID and BUILD_ID in the scripts' environment.
   automapSubstitutions: true
