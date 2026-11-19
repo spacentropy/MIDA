@@ -330,6 +330,29 @@ How busy the 22 processors were, the same day, commit `ae0c7f2`, run 44531779329
 - mcp's tests keep only about 5 processors busy under either runner: they wait on the test proxy and on replayed calls, not on the CPU.
 - These are averages over a run, which hide peaks and stretches on one processor.
 
+The same on a second pool, `mida-8`, c3-highcpu-8 workers with 8 processors and 16 GB, 2026-11-19, commit `b883b53`, benchmark run 44540603533 and real-world run 44540611329, every test passed. Its disk wrote 1 GiB at 205 MB/s, against 558 MB/s on `mida`: Google Cloud caps a disk's throughput partly by the machine's processors. Ratios, mida over plain, 8 processors beside 22:
+
+| test | plain, 8 | mida empty / plain, 8 and 22 | mida filled / plain, 8 and 22 |
+|---|---|---|---|
+| Benchmark Fresh | 111.9 s | 0.93, 1.15 | |
+| Benchmark Unchanged | 110.8 s | | 0.51, 0.37 |
+| Benchmark BodyEdit | 112.4 s | | 0.57, 0.52 |
+| Benchmark ApiEdit | 112.3 s | | 0.61, 0.59 |
+| Benchmark TestFresh | 125.0 s | 1.10, 1.33 | |
+| Benchmark TestUnchanged | 124.7 s | | 0.43, 0.32 |
+| Benchmark TestBodyEdit | 121.9 s | | 0.53, 0.48 |
+| Benchmark TestApiEdit | 123.3 s | | 0.60, 0.52 |
+| Aspire | 377.6 s | 0.97, 1.03 | 0.47, 0.49 |
+| Abp | 71.2 s | 1.49, 1.56 | 0.87, 0.82 |
+| OrchardCore | 129.0 s | 1.06, 1.05 | 0.10, 0.12 |
+| OrchardCoreTests | 171.4 s | 1.03, 1.03 | 0.08, 0.10 |
+| McpTests | 429.8 s | 1.10, 1.08 | 0.26, 0.13 |
+
+- A plain build took 1.9 to 2.4 times as long on 8 processors, and kept 74 to 86% of them busy, so the CPU limits it there.
+- A run that restores much from the cache waits on the slower disk: the benchmark's `Unchanged` 86% in iowait, mcp's filled run 79%. Those ratios got worse, mcp's twice as bad. Where little is restored or much is rebuilt, the ratio barely moved.
+- An empty-cache build got relatively cheaper, since the plain build beside it waits on the disk too.
+- So 8 processors are not enough for these repos, and the disk, not the processors, is what a hit needs. `mida` stays the pool for the numbers here.
+
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 
 First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
