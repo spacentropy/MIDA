@@ -1,6 +1,6 @@
 # Benchmarks and the test harness
 
-Status: built 2026-11-07, CI jobs added 2026-11-10 and moved to a Cloud Build private pool 2026-11-16. The sections below are in the order they were measured, so the newest numbers are under [In CI](#in-ci) and [Real-world repos](#real-world-repos). Code: `tests/Mida.Tests/GeneratedRepo.cs` (generator), `GeneratedRepoTests.cs` (correctness, in the suite), `Benchmarks.cs` (timing, `[Explicit]`), `.github/workflows/bench.yml`.
+Status: built 2026-11-07, CI jobs added 2026-11-10 and moved to a Cloud Build private pool 2026-11-16, profiled there 2026-11-20 ([Profiling on the pool](#profiling-on-the-pool-2026-11-20)). The sections below are in the order they were measured, so the newest numbers are under [In CI](#in-ci) and [Real-world repos](#real-world-repos). Code: `tests/Mida.Tests/GeneratedRepo.cs` (generator), `GeneratedRepoTests.cs` (correctness, in the suite), `Benchmarks.cs` (timing, `[Explicit]`), `.github/workflows/bench.yml`.
 
 ## One generator, two consumers
 
@@ -183,7 +183,7 @@ The benchmark at 128 projects, old build and new one back to back:
 Tried and dropped:
 
 - Server GC shortens graph evaluation further, 0.98 to 0.70 s, but the process grows from 260 MB to about 600 MB.
-- `TieredPGO` off and `TieredCompilation` off made no difference to the total.
+- `TieredPGO` off and `TieredCompilation` off made no difference to the total. Here, at 128 projects on macOS. On the 8-processor pool both pay off: see [Profiling on the pool](#profiling-on-the-pool-2026-11-20).
 - `ProjectInstance.TranslateEntireState`, which sends mida's evaluated project to the node in place of a second evaluation there, made no difference to a fresh build.
 
 What is left: restore is half of an all-hit build, 2.2 of 4.2 s, and nothing caches it. Starting nodes is a fixed cost, so that change matters less at 1024 projects, and none of this was measured there or on Linux.
@@ -388,3 +388,68 @@ First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.
 Not covered: `obj`, starting the app, and edits. The plan for edits stands: the scenarios 0 to 3, with one generic partial edit: append a comment line to a `.cs` in a leaf project. That changes the key but not the reference assembly, so it checks early cutoff without knowing the repo. API edits need repo knowledge, so skip them there.
 
 Two filters: the repo must build with SDK 10 or 11 (`global.json`), and Arcade repos (aspire, runtime, roslyn, efcore, aspnetcore) bootstrap their own SDK through `eng/build.sh`, so they cost weeks, not an afternoon. `dotnet/runtime` is out for good: native code, custom build. Aspire's solution builds with `dotnet build` once `NUGET_PACKAGES` is set, see above. Plain-SDK repos of real size to try first, in order: the 49-project repo the plan already names, OrchardCore, semantic-kernel `dotnet/`, OpenTelemetry .NET, Akka.NET. Their SDK pins and project counts are unchecked.
+
+## Profiling on the pool, 2026-11-20
+
+Starting from the `mida-8` baseline above. `scripts/profile-mida.sh` stands in for mida as `MIDA_BENCH_TOOL` and leaves, per run, `MIDA_TIMINGS` phases, a `dotnet-trace` of the mida process, its `System.Runtime` counters and the bytes the machine wrote. `MIDA_EXTRA_ARGS` adds arguments to every run and `MIDA_PROFILE_ENV` variables for mida and everything it starts. Submitted with `scripts/pool.sh`, which uploads the working tree, so no commit is needed:
+
+`MIDA_PROFILE_DIR="$PWD/TestResults/profile" MIDA_BENCH_ITERATIONS=2 MIDA_BENCH_TOOL="$PWD/scripts/profile-mida.sh" dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/Abp"`, after installing `dotnet-trace`, `dotnet-counters` and the packed mida as the workflows do.
+
+A traced run's BenchmarkDotNet time is not a result. The phases below are from inside mida and are compared only with other traced runs. The ratios are untraced runs of the full suite, as `bench.yml` and `realworld.yml` run it, one run each.
+
+What the profiles said:
+
+- **A run of hits is at the disk's floor.** `Unchanged` at 1024 projects spent 53 s restoring hits, while the machine wrote 12.6 GB, 235 MB/s on a disk that writes about 205 MB/s, with the processors 9% busy. No change to mida's code moves it. Only writing fewer bytes would.
+- **An empty-cache Abp build spent 35 s before its first project built:** restore 20.4 s, graph evaluation 11.1 s, prediction 3.1 s. Its build phase alone, 76 s, was about as long as a whole plain build: 72.1 s in the baseline, 89.0 s in that run.
+- **The JIT was a quarter of mida's CPU time.** It took 25 to 28 s of mida's 110 to 135 s of CPU time on Abp, compiling 200 to 800 methods a second through graph evaluation and the first half of the build. In graph evaluation 38% of the running samples were struct copies inside MSBuild's evaluator.
+- **Saving outputs costs Abp about 4 s of the build phase:** 70.6 s with `--read-only`, against 74.5 s. Of the managed samples on a processor in that phase, MSBuild's log packets took 20%, saving 12% and keys 10%, so nothing single stands out.
+
+Abp, phases of traced runs in seconds, the mean of two, empty cache then filled:
+
+| change | restore | graph evaluation | prediction | build | wall, empty | wall, filled |
+|---|---|---|---|---|---|---|
+| none | 20.4 | 11.1 | 3.1 | 76.2 | 111.4 | 66.3 |
+| `-p:RestoreUseStaticGraphEvaluation=false` | 32.4 | 9.3 | 2.8 | 74.4 | | 94.4 |
+| `<TieredPGO>false</TieredPGO>` in mida | 21.0 | 6.3 | 2.1 | 77.3 | 107.3 | 60.7 |
+| `<TieredCompilation>false</TieredCompilation>` in mida | 21.4 | 5.5 | 2.0 | 74.5 | 103.9 | 59.0 |
+| and `DOTNET_TieredPGO=0` for every process mida starts | 11.8 | 5.7 | 2.0 | 60.1 | 80.2 | 47.0 |
+| and `DOTNET_TieredCompilation=0` for them instead | 12.5 | 5.6 | 2.0 | 61.5 | 82.1 | 47.2 |
+
+- Static graph restore stays: off, restore took 12 s longer here, and 26.0 s against 15.8 s at 1024 generated projects. With it off the filled run restored again, for 33 s.
+- The processes mida starts, NuGet's restore, the worker nodes and the compiler server, are as cold as mida: in a benchmark every build server is shut down first, and on a CI runner each build starts them. Without PGO's instrumented tier the summed build time of OrchardCore's 448 projects fell from 4,797 s to 2,070 s.
+
+So two changes, each measured over the full suite on the pool. `<TieredCompilation>false</TieredCompilation>` in `Mida.csproj`, commit `6ae5390`, and then `DOTNET_TieredPGO=0` for every process mida starts, set in `Program.Run` unless the user set it. Ratios are mida over plain:
+
+| test | baseline | `TieredCompilation` off | and `DOTNET_TieredPGO=0` below |
+|---|---|---|---|
+| Benchmark Fresh | 0.91 | 0.87 | 0.79 |
+| Benchmark Unchanged / BodyEdit / ApiEdit | 0.48 / 0.59 / 0.62 | 0.48 / 0.56 / 0.60 | 0.48 / 0.55 / 0.59 |
+| Benchmark TestFresh | 1.11 | 1.08 | 0.98 |
+| Benchmark TestUnchanged / TestBodyEdit / TestApiEdit | 0.44 / 0.53 / 0.59 | 0.45 / 0.52 / 0.56 | 0.44 / 0.52 / 0.56 |
+| Abp, empty / filled | 1.47 / 0.87 | 1.49 / 0.81 | 1.14 / 0.68 |
+| OrchardCore, empty / filled | 1.06 / 0.10 | 1.03 / 0.10 | 0.59 / 0.08 |
+| OrchardCoreTests, empty / filled | 1.01 / 0.08 | 1.00 / 0.08 | 0.60 / 0.07 |
+| Aspire, empty / filled | 0.89 / 0.43 | 0.95 / 0.45 | 0.59 / 0.31 |
+| McpTests, empty / filled | 1.06 / 0.26 | 1.07 / 0.25 | 1.04 / 0.25 |
+
+- Every test passed, with the same hits and misses as the baseline, and every mida build left the same files as `dotnet build`.
+- The first change alone moved only Abp's filled ratio past the 0.04 that two baseline runs differed by: its mida build took 55.7 s, not 62.7 s. That and the halved evaluation are why it stays. Aspire's empty ratio rose because its plain build was faster that time, 373.5 s against 395.0 s, while mida took 353.8 s against 351.6 s.
+- The hits did not move, as the disk's floor says they cannot.
+- mcp's tests, which `mida test` starts with the variable too, did not get slower, and that run's time is mostly its tests.
+- **Much of the second change would speed up a plain build too.** The plain side never gets the variable. Run again with `DOTNET_TieredPGO=0` exported for the whole `dotnet test`, so for plain as well, one run each:
+
+  | test | plain | mida | mida / plain | filled / plain |
+  |---|---|---|---|---|
+  | Benchmark Fresh | 95.7 s, was 111.8 s | 85.6 s | 0.89 | |
+  | OrchardCore | 73.5 s, was 126.9 s | 75.2 s | 1.02 | 0.14 |
+  | Abp | 65.0 s, was 68.0 s | 80.5 s | 1.24 | 0.73 |
+
+  So OrchardCore's 0.59 is mostly the compiler running faster, which a plain build gets from the same variable. mida's own overhead there is about what it was, 1.02 against 1.06. Abp's plain build barely gains, so most of mida's gain there is its own, beginning with the static graph restore in NuGet's own process, 21.4 s to 11.8 s. Why its build phase gained 14 s and plain's whole build 3 s is not looked into. A user's absolute times are what fell: OrchardCore's empty-cache `mida build` took 74.7 s, not 131.0 s.
+- Tiering off costs a run that needs little: Abp with a filled cache reached its hits 0.78 s after starting, against 0.71 s.
+
+Not done:
+
+- Hard links from the store in place of copies would cut what a hit writes, which is the floor of every filled-cache ratio. [How much of a hit is MSBuild](#how-much-of-a-hit-is-msbuild-2026-11-11) tried them and set them aside, because a build that writes into a linked file would change the blob.
+- `mida test` was not profiled on its own. TestFresh moved with the build.
+- `DOTNET_TieredPGO=0` reaches every test process `mida test` starts and a compiler server that outlives mida. Only cold processes were measured, so a warm server or a long CPU-bound test suite could be slower without PGO.
+- Saving outputs, about 4 s of Abp's build phase, is not shortened.
