@@ -162,7 +162,8 @@ public sealed class Benchmarks : IDisposable
 
         var output = runs[^1].Output;
         var ratio = seconds / plain;
-        var cpu = Cpu();
+        // The pools share a CPU model and differ in processors, which change the ratio as much.
+        var cpu = $"{Cpu()}, {Environment.ProcessorCount} processors";
         var path = Path.Combine(TestContext.ResultsDirectory, $"bench-{scenario}-{Count}");
 
         // CI puts the last run's files here. Unset, the directory is one that holds none.

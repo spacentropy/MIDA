@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Runs one command on the Cloud Build private pool through cloudbuild.yaml, streams its log and copies its TestResults
 # back. Fails unless the build succeeded. scripts/pool-setup.sh provisions the pool, and .github/actions/pool runs this.
-# Usage: scripts/pool.sh PROJECT [REGION] [COMMAND] [TIMEOUT]
+# Usage: scripts/pool.sh PROJECT [REGION] [COMMAND] [TIMEOUT] [POOL]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-project=${1:?usage: scripts/pool.sh PROJECT [REGION] [COMMAND] [TIMEOUT]}
+project=${1:?usage: scripts/pool.sh PROJECT [REGION] [COMMAND] [TIMEOUT] [POOL]}
 region=${2:-europe-west4}
 run=${3:-dotnet test --project tests/Mida.Tests -f net11.0}
 # A mida test scenario at 1024 projects runs seven builds and the tests after most of them; 900 s was set for builds alone.
 timeout=${4:-1800s}
+# mida has 22 processors a worker, mida-8 has 8. Both are made by scripts/pool-setup.sh.
+pool=${5:-mida}
 where=(--project "$project" --region "$region")
 
 # The sign-in file of google-github-actions/auth can become mida-ci, so code on the pool must never see it. Only
@@ -22,7 +24,7 @@ fi
 
 # ^~~^ makes ~~ the separator between substitutions, so a command may contain commas.
 id=$(gcloud builds submit "${where[@]}" --async --format 'value(id)' --timeout "$timeout" \
-  --worker-pool "projects/$project/locations/$region/workerPools/mida" \
+  --worker-pool "projects/$project/locations/$region/workerPools/$pool" \
   --service-account "projects/$project/serviceAccounts/mida-build@$project.iam.gserviceaccount.com" \
   --gcs-source-staging-dir "gs://$project-mida-builds/source" --gcs-log-dir "gs://$project-mida-builds/logs" \
   --substitutions "^~~^_RUN=$run" .)

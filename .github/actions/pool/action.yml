@@ -14,6 +14,9 @@ inputs:
   timeout:
     description: How long the build may run, such as 1800s.
     default: 1800s
+  pool:
+    description: The worker pool, mida with 22 processors or mida-8 with 8.
+    default: mida
 
 runs:
   using: composite
@@ -30,8 +33,9 @@ runs:
         service_account: mida-ci@${{ inputs.project }}.iam.gserviceaccount.com
     # gcloud is on GitHub's Ubuntu runners.
     - shell: bash
-      run: scripts/pool.sh "$PROJECT" europe-west4 "$RUN" "$TIMEOUT"
+      run: scripts/pool.sh "$PROJECT" europe-west4 "$RUN" "$TIMEOUT" "$POOL"
       env:
         PROJECT: ${{ inputs.project }}
         RUN: ${{ inputs.run }}
         TIMEOUT: ${{ inputs.timeout }}
+        POOL: ${{ inputs.pool }}

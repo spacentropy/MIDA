@@ -15,6 +15,11 @@ gcloud builds worker-pools describe mida --project "$project" --region "$region"
   gcloud builds worker-pools create mida --project "$project" --region "$region" \
     --worker-machine-type c3-highcpu-22 --worker-disk-size 1000
 
+# Added 2026-11-19 to see what 8 processors change: the real-world builds kept 13 to 18 of 22 busy.
+gcloud builds worker-pools describe mida-8 --project "$project" --region "$region" > /dev/null 2>&1 ||
+  gcloud builds worker-pools create mida-8 --project "$project" --region "$region" \
+    --worker-machine-type c3-highcpu-8 --worker-disk-size 1000
+
 # Builds run as this account, which can reach the two buckets below and nothing else.
 gcloud iam service-accounts describe "$build" --project "$project" > /dev/null 2>&1 ||
   gcloud iam service-accounts create mida-build --project "$project" --display-name "MIDA builds"
