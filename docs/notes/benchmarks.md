@@ -58,7 +58,7 @@ A `dotnet test` that a test starts inherits `TESTINGPLATFORM_DOTNETTEST_EXECUTIO
 
 ## In CI
 
-`.github/workflows/bench.yml` runs the eight scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Since 2026-11-16 the job on GitHub only submits the work: `scripts/pool.sh` runs it on a Cloud Build private pool through `cloudbuild.yaml`, streams the log and copies `TestResults` back. Every run then has the same machine type, a `c3-highcpu-22`, which the hosted runners could not give: see the numbers below. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster, as long as both runs had the same CPU model. Each result stores its model in `bench-<scenario>-<count>.cpu`. When the two differ, the column names the other model, and the difference says nothing about the commit.
+`.github/workflows/bench.yml` runs the eight scenarios at 1024 projects, one job each, on every push to `main` that changes more than docs. Since 2026-11-16 the job on GitHub only submits the work: `scripts/pool.sh` runs it on a Cloud Build private pool through `cloudbuild.yaml`, streams the log and copies `TestResults` back. Every run then has the same machine type, which the hosted runners could not give: see the numbers below. That was a `c3-highcpu-22` until 2026-11-19 and is a `c3-highcpu-8` since, the `mida-8` pool, which mida is tuned for. Each job packs mida and installs it with `dotnet tool install`, so the tool package is what gets measured. The job summary shows the ratio beside that of the last green run on `main`, which it reads from that run's artifact. That column is how to tell whether a commit made mida faster, as long as both runs had the same CPU model. Each result stores its model in `bench-<scenario>-<count>.cpu`. When the two differ, the column names the other model, and the difference says nothing about the commit.
 
 Each summary also says what the runner is: CPU model, memory, disk and how fast that disk writes and reads. For each of the three repetitions it says what the whole machine did meanwhile: CPU busy, iowait and steal, and the memory left.
 
@@ -351,7 +351,8 @@ The same on a second pool, `mida-8`, c3-highcpu-8 workers with 8 processors and 
 - A plain build took 1.9 to 2.4 times as long on 8 processors, and kept 74 to 86% of them busy, so the CPU limits it there.
 - A run that restores much from the cache waits on the slower disk: the benchmark's `Unchanged` 86% in iowait, mcp's filled run 79%. Those ratios got worse, mcp's twice as bad. Where little is restored or much is rebuilt, the ratio barely moved.
 - An empty-cache build got relatively cheaper, since the plain build beside it waits on the disk too.
-- So 8 processors are not enough for these repos, and the disk, not the processors, is what a hit needs. `mida` stays the pool for the numbers here.
+- So on 8 processors the disk, not the processors, is what a hit needs.
+- Since 2026-11-19 `mida-8` is the default pool of `bench.yml`, `realworld.yml` and `scripts/pool.sh`, and the machine mida is tuned for: a small machine with a slow disk is closer to a developer's or a typical CI runner's than 22 processors, and it shows the cost of a hit instead of hiding it. The numbers above it are on `mida`, which stays for comparison.
 
 Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
 

@@ -18,13 +18,13 @@ The summary ends with the time saved: each manifest stores how long its miss too
 
 Diagnostics today: `--cache <dir>` to use a local store other than `~/.mida/cache`, `--evaluate` to ignore stored graphs, `--print-keys`, `--key-details <dir>` to write each key's lines, and `MIDA_BINLOG=<path>` for a binlog. Tests: `dotnet test --project tests/Mida.Tests -f net10.0` (and `-f net11.0`; without `-f` the command fails on a path bug), 210 on net10.0 and 211 on net11.0 on 2026-11-16 and six more since, which no full run has counted yet, about 13 minutes each on a hosted runner, including real builds and real test runs of a small repo and of a generated 8-project graph. The GCS tests use the bucket `MIDA_TEST_BUCKET` names, else fake-gcs-server through Testcontainers, and skip with neither. Benchmarks on a generated repo and builds of two real repos are `[Explicit]` tests, see [benchmarks.md](notes/benchmarks.md). After a failed build, `--no-build` runs stale binaries, so check the build first.
 
-Where it stands, 2026-11-16, as `mida build` over a plain `dotnet build` on Linux x64 and ext4, where a hit is a plain copy:
+Where it stands, 2026-11-19, as `mida build` over a plain `dotnet build` on Linux x64 and ext4, where a hit is a plain copy:
 
 | repo | where | plain build | empty cache | filled cache, clean clone at another path |
 |---|---|---|---|---|
 | OrchardCore v3.0.1, 227 projects | GitHub hosted runner, 4 processors | 162.9 s | 1.09 | 0.10, on 448 hits |
 | Abp 10.7.1, 270 projects | the same | 123.2 s | 1.38 | 0.82, on 163 hits. Its 107 multi-targeted projects have no key and are built |
-| generated, 1024 projects | Cloud Build private pool, 22 processors | 47 s | 1.16 | 0.37 unchanged, 0.51 after a body edit, 0.59 after an API edit |
+| generated, 1024 projects | Cloud Build private pool `mida-8`, 8 processors, the machine mida is tuned for | 112 s | 0.93 | 0.51 unchanged, 0.57 after a body edit, 0.61 after an API edit |
 
 Both real repos leave the same files under `bin` as `dotnet build`. The generated projects are one class each, so that row is the cache's overhead and not its saving.
 

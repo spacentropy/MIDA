@@ -10,8 +10,8 @@ region=${2:-europe-west4}
 run=${3:-dotnet test --project tests/Mida.Tests -f net11.0}
 # A mida test scenario at 1024 projects runs seven builds and the tests after most of them; 900 s was set for builds alone.
 timeout=${4:-1800s}
-# mida has 22 processors a worker, mida-8 has 8. Both are made by scripts/pool-setup.sh.
-pool=${5:-mida}
+# mida-8 has 8 processors a worker and is the machine mida is tuned for; mida has 22. scripts/pool-setup.sh makes both.
+pool=${5:-mida-8}
 where=(--project "$project" --region "$region")
 
 # The sign-in file of google-github-actions/auth can become mida-ci, so code on the pool must never see it. Only
