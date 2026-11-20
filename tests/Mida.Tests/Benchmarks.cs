@@ -76,18 +76,44 @@ public sealed class Benchmarks : IDisposable
     // numbers are on SDK 10. Pass multiTargetEvery: 5 when the benchmark moves to -f net11.0.
     private GeneratedRepo Generate(string name) => GeneratedRepo.Generate(Path.Combine(temp, name), Count);
 
+    // MIDA_BENCH_BUCKET, gs://<bucket>[/<prefix>], puts a bucket behind every cache, as CI has it. Each cache directory
+    // gets a prefix of its own, under one for this process.
+    internal static readonly string? Bucket = Environment.GetEnvironmentVariable("MIDA_BENCH_BUCKET") is { Length: > 0 } bucket
+        ? $"{bucket.TrimEnd('/')}/bench/{Guid.NewGuid():N}"
+        : null;
+
+    /// <summary>For a report: where a filled cache comes from.</summary>
+    internal static string Through => Bucket is null
+        ? string.Empty
+        : ", through a bucket: a run with a filled cache starts from an empty local one and is read-only";
+
+    /// <summary>The --cache arguments of a run that fills <paramref name="cache"/>, and its prefix in the bucket.</summary>
+    internal static string[] Caches(string cache) => Bucket is null ? ["--cache", cache] : ["--cache", cache, "--cache", Remote(cache)];
+
+    /// <summary>
+    /// The --cache arguments of a run in a clean clone from what a run left in <paramref name="filled"/>, writing to
+    /// <paramref name="cache"/>. Without a bucket that is the caller's copy of it. With one, <paramref name="cache"/>
+    /// starts empty, as on a fresh CI runner, and the run reads <paramref name="filled"/>'s prefix, read-only as on a
+    /// pull request, so that its misses leave the bucket as the next iteration needs it.
+    /// </summary>
+    internal static string[] FromFilled(string filled, string cache) => Bucket is null
+        ? ["--cache", cache]
+        : ["--cache", cache, "--cache", Remote(filled), "--read-only"];
+
+    private static string Remote(string cache) => $"{Bucket}/{Path.GetFileName(Path.GetDirectoryName(cache))}/{Path.GetFileName(cache)}";
+
     // CI names the packed tool it installed, which is what users run. Without one, the build beside the tests runs.
-    internal static (int ExitCode, string Output) RunMida(string root, string solution, string cache, string verb, params string[] arguments)
+    internal static (int ExitCode, string Output) RunMida(string root, string solution, string[] caches, string verb, params string[] arguments)
     {
-        string[] build = [verb, solution, "--cache", cache, .. arguments];
+        string[] build = [verb, solution, .. caches, .. arguments];
         return Environment.GetEnvironmentVariable("MIDA_BENCH_TOOL") is { Length: > 0 } tool
             ? Start(tool, root, null, build)
             : Run(root, null, [Path.Combine(AppContext.BaseDirectory, "Mida.dll"), .. build]);
     }
 
-    internal static string Mida(string root, string solution, string cache, string verb = "build", params string[] arguments)
+    internal static string Mida(string root, string solution, string[] caches, string verb = "build", params string[] arguments)
     {
-        var (exitCode, output) = RunMida(root, solution, cache, verb, arguments);
+        var (exitCode, output) = RunMida(root, solution, caches, verb, arguments);
         if (exitCode != 0)
         {
             Assert.Fail(output);
@@ -112,7 +138,7 @@ public sealed class Benchmarks : IDisposable
         if (filled)
         {
             var writer = Generate("a");
-            Mida(writer.Root, "Repo.slnx", filledCache, verb);
+            Mida(writer.Root, "Repo.slnx", Caches(filledCache), verb);
             Directory.Delete(writer.Root, recursive: true);
         }
 
@@ -134,12 +160,16 @@ public sealed class Benchmarks : IDisposable
             {
                 // Its own copy of the cache, since a run with misses adds to it.
                 cache = Path.Combine(temp, $"cache{runs.Count}");
-                Copy(filledCache, cache);
+                if (Bucket is null)
+                {
+                    Copy(filledCache, cache);
+                }
+
                 clone = Generate("some/deeper/path/b");
                 missed = edit(clone);
                 before = ShutDown();
             },
-            () => Mida(clone.Root, "Repo.slnx", cache, verb),
+            () => Mida(clone.Root, "Repo.slnx", filled ? FromFilled(filledCache, cache) : Caches(cache), verb),
             output =>
             {
                 var tests = clone.Projects.Count(p => p.IsTest);
@@ -186,7 +216,7 @@ public sealed class Benchmarks : IDisposable
             |---|---|---|---|---|---|---|
             | {scenario} | {Count} | {plain:F1} s | {seconds:F1} s | {ratio:F2} | {change} | {result} |
 
-            Medians of {Iterations} runs under BenchmarkDotNet, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors, {cpu}
+            Medians of {Iterations} runs under BenchmarkDotNet, cache {megabytes} MB{Through}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors, {cpu}
 
             {timings}
 

@@ -129,7 +129,7 @@ public sealed partial class RealWorld : IDisposable
         var url = LocalRepo();
         var source = Source(url, LocalBranch, LocalSolution);
         var filledCache = Path.Combine(temp, "cache");
-        var fill = Clone(source, url, "fill", (root, _) => Benchmarks.Mida(root, LocalSolution, filledCache));
+        var fill = Clone(source, url, "fill", (root, _) => Benchmarks.Mida(root, LocalSolution, Benchmarks.Caches(filledCache)));
         fill.Before();
         fill.After(fill.Run());
 
@@ -152,12 +152,16 @@ public sealed partial class RealWorld : IDisposable
                     source,
                     url,
                     $"{scenario}/mida",
-                    (root, i) => Benchmarks.Mida(root, LocalSolution, Cache(i)),
+                    (root, i) => Benchmarks.Mida(root, LocalSolution, Benchmarks.FromFilled(filledCache, Cache(i))),
                     after: (o, _) => output = o,
                     // Its own copy of the cache, since a run with misses adds to it.
                     before: (root, i) =>
                     {
-                        Benchmarks.Copy(filledCache, Cache(i));
+                        if (Benchmarks.Bucket is null)
+                        {
+                            Benchmarks.Copy(filledCache, Cache(i));
+                        }
+
                         Edit(root);
                     }));
             rows.Add($"| {scenario} | {string.Join(", ", edited.Select(Path.GetFileNameWithoutExtension))} | {timed.Plain:F1} s | {timed.Filled:F1} s | {timed.Filled / timed.Plain:F2} | {SummaryLines(output)} |");
@@ -190,7 +194,7 @@ public sealed partial class RealWorld : IDisposable
             |---|---|---|---|---|---|
             {string.Join('\n', rows)}
 
-            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet{Benchmarks.Through}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
             {string.Join('\n', tables)}
             """;
@@ -245,7 +249,7 @@ public sealed partial class RealWorld : IDisposable
             Benchmarks.Iterations,
             Path.Combine(temp, "BenchmarkDotNet"),
             Clone(source, url, "plain", (root, _) => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable, .. properties])), after: (o, _) => plain.Add(o)),
-            Clone(source, url, "fresh", (root, i) => Exited(1, Benchmarks.RunMida(root, solution, Cache(i), "test", properties)), after: (o, _) => fresh.Add(o)),
+            Clone(source, url, "fresh", (root, i) => Exited(1, Benchmarks.RunMida(root, solution, Benchmarks.Caches(Cache(i)), "test", properties)), after: (o, _) => fresh.Add(o)),
             Clone(source, url, "some/deeper/path/filled", (root, i) => Exited(2, Benchmarks.RunMida(root, solution, Filled(i), "test", properties)), after: (o, _) => filled.Add(o)));
         // mida's own line, not a test's message that says the same, such as mcp's "Test proxy restore failed with exit code 1".
         var failures = fresh.Select(o => o.Split('\n').Where(l => l.Contains("mida: ", StringComparison.Ordinal) && l.Contains(".csproj", StringComparison.Ordinal) && l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList()).ToList();
@@ -255,7 +259,7 @@ public sealed partial class RealWorld : IDisposable
             |---|---|---|---|---|---|
             | {name} {tag} | {timed.Plain:F1} s | {timed.Empty:F1} s | {timed.Empty / timed.Plain:F2} | {timed.Filled:F1} s | {timed.Filled / timed.Plain:F2} |
 
-            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, last exit codes {codes[0]}, {codes[1]} and {codes[2]}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet{Benchmarks.Through}, last exit codes {codes[0]}, {codes[1]} and {codes[2]}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
             - Empty cache, last run: {SummaryLines(fresh[^1])}
             - Filled cache, last run: {SummaryLines(filled[^1])}
@@ -294,9 +298,12 @@ public sealed partial class RealWorld : IDisposable
     /// <summary>The cache that iteration <paramref name="iteration"/> of an empty-cache side fills.</summary>
     private string Cache(int iteration) => Path.Combine(temp, $"cache{iteration}");
 
-    /// <summary>The same cache for the filled-cache side, which BenchmarkDotNet runs after the empty-cache one.</summary>
-    private string Filled(int iteration) => Directory.Exists(Cache(iteration))
-        ? Cache(iteration)
+    /// <summary>
+    /// The --cache arguments of the filled-cache side, which BenchmarkDotNet runs after the empty-cache one: that run's
+    /// cache itself, or with a bucket its prefix there and an empty local cache.
+    /// </summary>
+    private string[] Filled(int iteration) => Directory.Exists(Cache(iteration))
+        ? Benchmarks.FromFilled(Cache(iteration), Benchmarks.Bucket is null ? Cache(iteration) : Path.Combine(temp, $"filled{iteration}"))
         : throw new InvalidOperationException($"No empty-cache run filled {Cache(iteration)}");
 
     /// <summary>The numbers of the line that ends a mida test, or -1 each without one.</summary>
@@ -324,7 +331,7 @@ public sealed partial class RealWorld : IDisposable
             Benchmarks.Iterations,
             Path.Combine(temp, "BenchmarkDotNet"),
             Clone(source, url, "plain", (root, _) => Dotnet(root, null, ["build", solution, .. Relocatable, .. properties]), after: (_, root) => plain.Add(Outputs(root))),
-            Clone(source, url, "fresh", (root, i) => outputs[0] = Benchmarks.Mida(root, solution, Cache(i), "build", properties), after: (_, root) => fresh.Add(Outputs(root))),
+            Clone(source, url, "fresh", (root, i) => outputs[0] = Benchmarks.Mida(root, solution, Benchmarks.Caches(Cache(i)), "build", properties), after: (_, root) => fresh.Add(Outputs(root))),
             // A clean clone at another path with the cache the build before filled, as a CI runner has it.
             Clone(source, url, "some/deeper/path/filled", (root, i) => outputs[1] = Benchmarks.Mida(root, solution, Filled(i), "build", properties), after: (_, root) => filled.Add(Outputs(root))));
 
@@ -347,7 +354,7 @@ public sealed partial class RealWorld : IDisposable
             |---|---|---|---|---|---|
             | {name} {tag} | {timed.Plain:F1} s | {timed.Empty:F1} s | {timed.Empty / timed.Plain:F2} | {timed.Filled:F1} s | {timed.Filled / timed.Plain:F2} |
 
-            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, cache {megabytes} MB, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
+            Medians of {Benchmarks.Iterations} runs under BenchmarkDotNet, cache {megabytes} MB{Benchmarks.Through}, {RuntimeInformation.OSDescription} {RuntimeInformation.OSArchitecture}, {Environment.ProcessorCount} processors
 
             - Empty cache, last run: {SummaryLines(outputs[0])}
             - Filled cache, last run: {SummaryLines(outputs[1])}

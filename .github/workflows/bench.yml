@@ -31,7 +31,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       # On the pool: what the worker is, since machines differ (one commit's Fresh ratio moved by 23% between two GitHub
       # runners), then the packed tool installed the way a user installs it, then the benchmark. Its checkouts and
-      # caches are under /tmp. The generated repo pins SDK 10, which the numbers in docs/notes/benchmarks.md are on.
+      # local caches are under /tmp, with the pool's test bucket behind them, as CI has it: a filled cache is in the
+      # bucket, and the run starts with an empty local one. The generated repo pins SDK 10, which the numbers in
+      # docs/notes/benchmarks.md are on.
       - uses: ./.github/actions/pool
         with:
           project: ${{ secrets.GCP_PROJECT }}
@@ -51,7 +53,7 @@ jobs:
             } | tee TestResults/machine.md
             dotnet pack src/Mida -c Release -p:Version=0.0.0-bench -o out
             dotnet tool install -g mida --version 0.0.0-bench --add-source out --framework net10.0
-            MIDA_BENCH_COUNT=1024 MIDA_BENCH_TOOL=mida MIDA_BENCH_PREVIOUS="$PWD/previous" \
+            MIDA_BENCH_COUNT=1024 MIDA_BENCH_TOOL=mida MIDA_BENCH_PREVIOUS="$PWD/previous" MIDA_BENCH_BUCKET="gs://$MIDA_TEST_BUCKET" \
               dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
       - run: cat TestResults/machine.md TestResults/bench-*.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
