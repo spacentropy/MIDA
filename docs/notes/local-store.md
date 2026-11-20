@@ -6,10 +6,10 @@ Status: implemented, 2026-11-07. Answers [plan milestone 4](../plan.md#4-local-s
 
 ```
 <cache>/v1/cas/<sha256[0:2]>/<sha256>    one blob per file, uncompressed so it can be cloned
-<cache>/v1/ac/<key>                      manifest, JSON
+<cache>/v2/ac/<key>                      manifest, JSON
 ```
 
-A manifest holds `files` (path, hash, Unix mode), `references` (path, source), `targets` (replayed items) and, since milestone 6, `buildTime`, which a hit reports as saved. Paths are relative to the repo root. Item values use `{RepoRoot}/`, and `{NuGetPackageRoot}/` since milestone 5. Blobs are written before the manifest, each to a temporary name and then renamed.
+A manifest holds `files` (path, hash, Unix mode), `references` (path, source), `targets` (replayed items) and, since milestone 6, `buildTime`, which a hit reports as saved. Since 2026-11-21 it also holds `directories`: the empty directories under the project's `bin/` and `obj/`, which a restore makes too. OrchardCore's test project makes an empty `bin/Debug/net10.0/wwwroot`, and its tests start a web host there. ASP.NET Core takes a web root only from a `wwwroot` that exists, and without one ImageSharp's cache threw, so after a hit 52 of the 2,298 tests failed. With them, on the pool, a clean clone that hit all 398 projects passed every test, also once the writer's checkout was deleted (`scripts/hit-orchardcore.sh`). A v1 manifest would restore without them, so manifests moved to `v2/ac`, while blobs stay in `v1/cas`. Two writers that differ only in empty directories are not a sign of nondeterminism: a delete leaves its directory behind, so a checkout that built before has more of them than a clean clone. Paths are relative to the repo root. Item values use `{RepoRoot}/`, and `{NuGetPackageRoot}/` since milestone 5. Blobs are written before the manifest, each to a temporary name and then renamed.
 
 Two more files are left out of the manifest beyond [relocation.md](relocation.md): `*.CoreCompileInputs.cache` and `*.GeneratedMSBuildEditorConfig.editorconfig`. They were the only ones that differ between checkouts of one commit. Without them, manifests are byte-identical across paths, so in milestone 5 a second writer's different manifest really means nondeterminism.
 

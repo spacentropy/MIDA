@@ -31,7 +31,7 @@ public sealed class OutputCacheTests : IDisposable
     }
 
     private Task<bool> Save(params string[] files) =>
-        new OutputCache(store, repo).SaveAsync(Key, files, [], [], TimeSpan.Zero, Token);
+        new OutputCache(store, repo).SaveAsync(Key, files, [], [], [], TimeSpan.Zero, Token);
 
     private string Blob(string hash) => Path.Combine(temp, "cache", "v1", "cas", hash[..2], hash);
 
@@ -45,7 +45,7 @@ public sealed class OutputCacheTests : IDisposable
         }
 
         ManifestTarget[] targets = [new("Build", [new ManifestItem("{RepoRoot}/App/bin/app", new Dictionary<string, string> { ["A"] = "b" })])];
-        await new OutputCache(store, repo).SaveAsync(Key, [file], [new ManifestReference("App/bin/lib.dll", "Lib/bin/lib.dll")], targets, TimeSpan.Zero, Token);
+        await new OutputCache(store, repo).SaveAsync(Key, [file], [], [new ManifestReference("App/bin/lib.dll", "Lib/bin/lib.dll")], targets, TimeSpan.Zero, Token);
 
         var other = Path.Combine(temp, "other");
         InRepo(other, "Lib/bin/lib.dll", "current");
@@ -63,6 +63,24 @@ public sealed class OutputCacheTests : IDisposable
         }
     }
 
+    [Test]
+    public async Task EmptyDirectoryIsRestoredAndLeftOutOfTheComparison()
+    {
+        var file = InRepo(repo, "bin/a", "a");
+        var empty = Path.Combine(repo, "bin", "wwwroot");
+        Directory.CreateDirectory(empty);
+        var cache = new OutputCache(store, repo);
+        await Assert.That(await cache.SaveAsync(Key, [file], [empty], [], [], TimeSpan.Zero, Token)).IsTrue();
+        // A checkout whose earlier build left a directory empty stores the same entry.
+        await Assert.That(await cache.SaveAsync(Key, [file], [empty, Path.Combine(repo, "obj", "stale")], [], [], TimeSpan.Zero, Token)).IsTrue();
+
+        var other = Path.Combine(temp, "other");
+        var manifest = await new OutputCache(store, other).TryRestoreAsync(Key, null, Token);
+
+        await Assert.That(manifest?.Directories).IsEquivalentTo(["bin/wwwroot"]);
+        await Assert.That(Directory.Exists(Path.Combine(other, "bin", "wwwroot"))).IsTrue();
+    }
+
     private static Relocation Swap(string from, string to) => new(
         (path, content) => path.EndsWith(".json", StringComparison.Ordinal) ? Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(content).Replace(from, "{R}", StringComparison.Ordinal)) : null,
         content => Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(content).Replace("{R}", to, StringComparison.Ordinal)));
@@ -73,7 +91,7 @@ public sealed class OutputCacheTests : IDisposable
         var other = Path.Combine(temp, "other");
         var json = InRepo(repo, "bin/a.json", $"[\"{repo}/wwwroot\"]");
         var plain = InRepo(repo, "bin/b", repo);
-        await new OutputCache(store, repo, Swap(repo, "unused")).SaveAsync(Key, [json, plain], [], [], TimeSpan.Zero, Token);
+        await new OutputCache(store, repo, Swap(repo, "unused")).SaveAsync(Key, [json, plain], [], [], [], TimeSpan.Zero, Token);
 
         var manifest = await new OutputCache(store, other, Swap("unused", other)).TryRestoreAsync(Key, null, Token);
 
@@ -88,7 +106,7 @@ public sealed class OutputCacheTests : IDisposable
     public async Task ManifestWrittenBeforeTheTokenMarkRestores()
     {
         var hash = await new OutputCache(store, repo).SaveBlobAsync("a"u8.ToArray(), Token);
-        await store.TryCreateAsync("v1/ac/" + Key, Encoding.UTF8.GetBytes($$"""{"files":[{"path":"bin/a","hash":"{{hash}}","mode":null}],"references":[],"targets":[]}"""), Token);
+        await store.TryCreateAsync("v2/ac/" + Key, Encoding.UTF8.GetBytes($$"""{"files":[{"path":"bin/a","hash":"{{hash}}","mode":null}],"references":[],"targets":[]}"""), Token);
 
         var manifest = await new OutputCache(store, repo, Swap("a", "b")).TryRestoreAsync(Key, null, Token);
 
@@ -171,8 +189,8 @@ public sealed class OutputCacheTests : IDisposable
     {
         var file = InRepo(repo, "bin/a", "a");
         var cache = new OutputCache(store, repo);
-        await Assert.That(await cache.SaveAsync(Key, [file], [], [], TimeSpan.FromSeconds(1), Token)).IsTrue();
-        await Assert.That(await cache.SaveAsync(Key, [file], [], [], TimeSpan.FromSeconds(2), Token)).IsTrue();
+        await Assert.That(await cache.SaveAsync(Key, [file], [], [], [], TimeSpan.FromSeconds(1), Token)).IsTrue();
+        await Assert.That(await cache.SaveAsync(Key, [file], [], [], [], TimeSpan.FromSeconds(2), Token)).IsTrue();
 
         await Assert.That((await cache.TryRestoreAsync(Key, null, Token))?.BuildTime).IsEqualTo(TimeSpan.FromSeconds(1));
     }
@@ -181,7 +199,7 @@ public sealed class OutputCacheTests : IDisposable
     public async Task TieredRestoreFetchesFromRemoteIntoLocal()
     {
         var remote = new FileSystemStore(Path.Combine(temp, "remote"));
-        await new OutputCache(remote, repo).SaveAsync(Key, [InRepo(repo, "bin/a", "a")], [], [], TimeSpan.Zero, Token);
+        await new OutputCache(remote, repo).SaveAsync(Key, [InRepo(repo, "bin/a", "a")], [], [], [], TimeSpan.Zero, Token);
 
         var other = Path.Combine(temp, "other");
         await Assert.That(await new OutputCache(new TieredStore(store, remote), other).TryRestoreAsync(Key, null, Token)).IsNotNull();
@@ -196,11 +214,11 @@ public sealed class OutputCacheTests : IDisposable
     {
         var remote = new FileSystemStore(Path.Combine(temp, "remote"));
         var file = InRepo(repo, "bin/a", "first");
-        await new OutputCache(remote, repo).SaveAsync(Key, [file], [], [], TimeSpan.Zero, Token);
+        await new OutputCache(remote, repo).SaveAsync(Key, [file], [], [], [], TimeSpan.Zero, Token);
 
         File.WriteAllText(file, "second");
         var tiered = new OutputCache(new TieredStore(store, remote), repo);
-        await Assert.That(await tiered.SaveAsync(Key, [file], [], [], TimeSpan.Zero, Token)).IsFalse();
+        await Assert.That(await tiered.SaveAsync(Key, [file], [], [], [], TimeSpan.Zero, Token)).IsFalse();
 
         await tiered.TryRestoreAsync(Key, null, Token);
         await Assert.That(File.ReadAllText(file)).IsEqualTo("first");
@@ -267,6 +285,8 @@ public sealed class OutputCacheTests : IDisposable
     [Arguments("""{"files":[],"references":[{"path":"../evil","source":"a"}],"targets":[]}""")]
     [Arguments("""{"files":[],"references":[{"path":"a","source":"../../secret"}],"targets":[]}""")]
     [Arguments("""{"files":[{"path":"a","hash":"../../../secret","mode":null}],"references":[],"targets":[]}""")]
+    [Arguments("""{"files":[],"references":[],"targets":[],"directories":["../evil"]}""")]
+    [Arguments("""{"files":[],"references":[],"targets":[],"directories":["."]}""")]
     public async Task ManifestCannotReachOutsideTheRepo(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
@@ -294,6 +314,9 @@ public sealed class OutputCacheTests : IDisposable
     [Arguments("""{"files":[],"references":[],"targets":[{"name":"Build","items":[]},{"name":"build","items":[]}]}""")]
     [Arguments("""{"files":[],"references":[],"targets":[{"name":"Build","items":[null]}]}""")]
     [Arguments("""{"files":[],"references":[],"targets":[{"name":"Build","items":[{"spec":"s","metadata":{"a":null}}]}]}""")]
+    [Arguments("""{"files":[],"references":[],"targets":[],"directories":[null]}""")]
+    [Arguments("""{"files":[{"path":"bin/a","hash":"HASH","mode":null}],"references":[],"targets":[],"directories":["bin/a"]}""")]
+    [Arguments("""{"files":[{"path":"bin/a/b","hash":"HASH","mode":null}],"references":[],"targets":[],"directories":["bin/a"]}""")]
     public async Task MalformedEntryIsRejectedBeforeAnyOutputChanges(string json)
     {
         ArgumentNullException.ThrowIfNull(json);
@@ -321,7 +344,7 @@ public sealed class OutputCacheTests : IDisposable
     {
         var existing = InRepo(repo, "a", "existing");
         var manifest = json.Replace("HASH", new string('a', 64), StringComparison.Ordinal);
-        await store.TryCreateAsync("v1/ac/" + Key, Encoding.UTF8.GetBytes(manifest), Token);
+        await store.TryCreateAsync("v2/ac/" + Key, Encoding.UTF8.GetBytes(manifest), Token);
 
         await Assert.ThrowsExactlyAsync<TException>(() => new OutputCache(store, repo).TryRestoreAsync(Key, null, Token));
 

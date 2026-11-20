@@ -39,6 +39,11 @@ public sealed class OutputCache(IObjectStore store, string repoRoot, Relocation?
             File.Copy(StorePath.Contained(repoRoot, reference.Source), Replaceable(reference.Path));
             return ValueTask.CompletedTask;
         });
+        foreach (var directory in manifest.Directories ?? [])
+        {
+            Directory.CreateDirectory(StorePath.Contained(repoRoot, directory));
+        }
+
         return manifest;
     }
 
@@ -83,6 +88,7 @@ public sealed class OutputCache(IObjectStore store, string repoRoot, Relocation?
     public async Task<bool> SaveAsync(
         string key,
         IEnumerable<string> files,
+        IEnumerable<string> directories,
         IReadOnlyList<ManifestReference> references,
         IReadOnlyList<ManifestTarget> targets,
         TimeSpan buildTime,
@@ -103,13 +109,15 @@ public sealed class OutputCache(IObjectStore store, string repoRoot, Relocation?
         });
 
         // Blobs first: a reader that finds a manifest relies on them. Sorted, so a deterministic build writes identical bytes.
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(
-            new Manifest([.. stored.OrderBy(f => f.Path, StringComparer.Ordinal)], references, targets, buildTime), ManifestJson.Default.Manifest);
+        List<string> empty = [.. directories.Select(Relative).Order(StringComparer.Ordinal)];
+        var entry = new Manifest([.. stored.OrderBy(f => f.Path, StringComparer.Ordinal)], references, targets, buildTime, empty.Count > 0 ? empty : null);
+        var manifest = JsonSerializer.SerializeToUtf8Bytes(entry, ManifestJson.Default.Manifest);
         return await store.TryCreateAsync(ManifestKey(key), manifest, cancellationToken)
             || await store.GetAsync(ManifestKey(key), cancellationToken) is not { } existing
-            // Every writer times its build differently, so the time is left out of the comparison.
+            // Every writer times its build differently, so the time is left out of the comparison. So are empty
+            // directories: deleting files leaves theirs, so a checkout that built before has some a clean clone does not.
             || JsonSerializer.Deserialize(existing, ManifestJson.Default.Manifest) is { } other
-                && JsonSerializer.SerializeToUtf8Bytes(other with { BuildTime = buildTime }, ManifestJson.Default.Manifest).AsSpan().SequenceEqual(manifest);
+                && JsonSerializer.SerializeToUtf8Bytes(other with { BuildTime = buildTime, Directories = entry.Directories }, ManifestJson.Default.Manifest).AsSpan().SequenceEqual(manifest);
     }
 
     // A hash becomes a path in the store, so its shape is checked wherever one comes from outside.
@@ -117,7 +125,8 @@ public sealed class OutputCache(IObjectStore store, string repoRoot, Relocation?
 
     private static string BlobKey(string hash) => $"v1/cas/{hash[..2]}/{hash}";
 
-    private static string ManifestKey(string key) => $"v1/ac/{key}";
+    // v2 since entries hold empty directories: a v1 entry would restore without them.
+    private static string ManifestKey(string key) => $"v2/ac/{key}";
 
     // Windows refuses to delete a read-only file.
     private static void Delete(string path)
@@ -142,24 +151,27 @@ public sealed class OutputCache(IObjectStore store, string repoRoot, Relocation?
                 && t.Items.All(i => i is not null && i.Metadata.Values.All(v => v is not null)))
             // MSBuild hangs on a result that holds a target twice.
             && manifest.Targets.DistinctBy(t => t.Name, StringComparer.OrdinalIgnoreCase).Count() == manifest.Targets.Count
+            && (manifest.Directories ?? []).All(d => d is not null)
             && DistinctFiles(manifest);
         if (!valid)
         {
             throw new InvalidDataException($"Manifest {key} is malformed");
         }
 
-        foreach (var path in manifest.Files.Select(f => f.Path).Concat(manifest.References.SelectMany(r => new[] { r.Path, r.Source })))
+        foreach (var path in manifest.Files.Select(f => f.Path).Concat(manifest.References.SelectMany(r => new[] { r.Path, r.Source })).Concat(manifest.Directories ?? []))
         {
             StorePath.Contained(repoRoot, path);
         }
     }
 
-    // A path written twice gets whichever copy lands last, and a path that is another's directory fails one of them.
+    // A path written twice gets whichever copy lands last, and a path that is another's directory fails one of them. An
+    // empty directory is neither a file nor above one.
     private static bool DistinctFiles(Manifest manifest)
     {
         var paths = new HashSet<string>(OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase);
         var all = manifest.Files.Select(f => f.Path).Concat(manifest.References.Select(r => r.Path)).ToList();
-        return all.All(paths.Add) && !all.Any(p => Parents(p).Any(paths.Contains));
+        return all.All(paths.Add) && !all.Any(p => Parents(p).Any(paths.Contains))
+            && !(manifest.Directories ?? []).Any(d => paths.Contains(d) || all.Any(p => Parents(p).Contains(d, paths.Comparer)));
     }
 
     private static IEnumerable<string> Parents(string path)

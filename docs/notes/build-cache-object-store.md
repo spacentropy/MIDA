@@ -31,7 +31,7 @@ Two namespaces, as in Bazel's remote cache: content-addressed blobs and action-c
 
 ```
 <prefix>/v1/cas/<sha256[0:2]>/<sha256>        immutable output blobs (zstd)
-<prefix>/v1/ac/<cache-key>                    manifest: outputs -> CAS digests + metadata
+<prefix>/v2/ac/<cache-key>                    manifest: outputs -> CAS digests + metadata (v2 since 2026-11-21)
 <prefix>/v1/refs/<name>                       small mutable pointers (e.g. last green SHA per branch)
 <prefix>/v1/pr/<number>/ac/<cache-key>        optional PR-scoped writable namespace
 ```

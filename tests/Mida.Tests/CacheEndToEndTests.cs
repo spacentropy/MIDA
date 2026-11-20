@@ -223,7 +223,7 @@ public sealed class CacheEndToEndTests : IDisposable
         // Replayed target results with package paths would need a {NugetPackageRoot} token. This root exists here, so only this check sees one.
         var root = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
-        var manifests = Directory.GetFiles(Path.Combine(temp, "cache", "v1", "ac"));
+        var manifests = Directory.GetFiles(Path.Combine(temp, "cache", "v2", "ac"));
         await Assert.That(manifests).IsNotEmpty();
         await Assert.That(manifests.Select(File.ReadAllText).Where(m => m.Contains(root, StringComparison.OrdinalIgnoreCase))).IsEmpty();
 
@@ -460,7 +460,7 @@ public sealed class CacheEndToEndTests : IDisposable
     }
 
     private int ManifestsNaming(string file) =>
-        Directory.GetFiles(Path.Combine(temp, "cache", "v1", "ac")).Count(manifest => File.ReadAllText(manifest).Contains(file, StringComparison.Ordinal));
+        Directory.GetFiles(Path.Combine(temp, "cache", "v2", "ac")).Count(manifest => File.ReadAllText(manifest).Contains(file, StringComparison.Ordinal));
 
     [Test]
     public async Task FilesInAnOutDirOutsideBinAndObjSurvive()
@@ -481,6 +481,27 @@ public sealed class CacheEndToEndTests : IDisposable
 
         // No build wrote it, so it is no output: a hit elsewhere would write this checkout's copy over that one's.
         await Assert.That(ManifestsNaming("README.md")).IsEqualTo(0);
+    }
+
+    // As OrchardCore's tests make theirs: a web host takes its web root only from a wwwroot that exists.
+    [Test]
+    public async Task EmptyDirectoryTheBuildMakesIsThereAfterAHit()
+    {
+        string Making(string relativePath)
+        {
+            var root = Checkout(relativePath);
+            Edit(root, "Tests/Tests.csproj", "</Project>", """
+                  <Target Name="MakeWebRoot" BeforeTargets="Build"><MakeDir Directories="$(OutputPath)wwwroot" /></Target>
+                </Project>
+                """);
+            return root;
+        }
+
+        Build(Making("a"));
+        var clone = Making("b");
+
+        await Assert.That(Build(clone)).Contains(AllHits);
+        await Assert.That(Directory.Exists(Path.Combine(clone, "Tests", "bin", "Debug", "net10.0", "wwwroot"))).IsTrue();
     }
 
     // A local database, a log, a file put there by hand: MSBuild deletes only what it wrote, and so does mida.
@@ -515,7 +536,7 @@ public sealed class CacheEndToEndTests : IDisposable
 
         await Assert.That(output).Contains("holds the project itself");
         await Assert.That(output).Contains("0 hits, 0 misses");
-        await Assert.That(Directory.Exists(Path.Combine(temp, "cache", "v1", "ac"))).IsFalse();
+        await Assert.That(Directory.Exists(Path.Combine(temp, "cache", "v2", "ac"))).IsFalse();
     }
 
     [Test]
@@ -769,7 +790,7 @@ public sealed class CacheEndToEndTests : IDisposable
     {
         var root = Checkout("a");
         Build(root);
-        foreach (var manifest in Directory.GetFiles(Path.Combine(temp, "cache", "v1", "ac")))
+        foreach (var manifest in Directory.GetFiles(Path.Combine(temp, "cache", "v2", "ac")))
         {
             var json = File.ReadAllText(manifest);
             File.WriteAllText(manifest, $$"""{{json[..json.IndexOf("\"targets\":", StringComparison.Ordinal)]}}"targets":{{targets}}}""");

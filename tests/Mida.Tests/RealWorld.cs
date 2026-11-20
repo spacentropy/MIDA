@@ -418,11 +418,13 @@ public sealed partial class RealWorld : IDisposable
     private static Dictionary<string, string> Outputs(string root)
     {
         var rootBytes = Encoding.UTF8.GetBytes(root);
-        return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+        // An empty directory too: OrchardCore's tests fail without the bin/.../wwwroot their build makes.
+        return Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
+            .Where(e => File.Exists(e) || !Directory.EnumerateFileSystemEntries(e).Any())
             .Select(f => Path.GetRelativePath(root, f))
             .Where(f => f.Split(Path.DirectorySeparatorChar) is var parts && parts[0] != ".git" && parts.Contains("bin") && !parts.Contains("node_modules"))
             .AsParallel()
-            .ToDictionary(f => f, f => Hash(Path.Combine(root, f), rootBytes), StringComparer.Ordinal);
+            .ToDictionary(f => f, f => File.Exists(Path.Combine(root, f)) ? Hash(Path.Combine(root, f), rootBytes) : "empty directory", StringComparer.Ordinal);
     }
 
     /// <summary>

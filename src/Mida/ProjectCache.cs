@@ -248,6 +248,7 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
             var stored = await cache.SaveAsync(
                 key.Value,
                 outputs.Where(f => !copies.ContainsKey(f)),
+                ProjectOutputs.EmptyDirectories(project),
                 // In a shared directory a dependency's file is its own source, and a restore would delete it before copying.
                 [.. copies.Where(c => c.Key != c.Value).Select(c => new ManifestReference(Name(c.Key), Name(c.Value))).OrderBy(r => r.Path, StringComparer.Ordinal)],
                 targets,
@@ -276,7 +277,8 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
     private void Accept(ProjectModel project, Manifest manifest)
     {
         var paths = Paths(manifest).ToList();
-        if (paths.FirstOrDefault(p => !project.Outputs(p)) is { } outside)
+        // A directory is not in the record: a miss deletes files only, and an empty directory left is harmless.
+        if (paths.Concat((manifest.Directories ?? []).Select(d => Path.GetFullPath(d, repoRoot))).FirstOrDefault(p => !project.Outputs(p)) is { } outside)
         {
             throw new InvalidDataException($"{outside} is outside the output directories of {project.Path}");
         }

@@ -26,6 +26,19 @@ internal static class ProjectOutputs
         ];
     }
 
+    /// <summary>
+    /// The empty directories under bin/ and obj/, which a hit must make too: OrchardCore's tests make bin/.../wwwroot,
+    /// and without it the web host has no web root. Outside them a directory can be the repo's own.
+    /// </summary>
+    public static List<string> EmptyDirectories(ProjectModel project) => project.CrossTargeting ? [] :
+    [
+        .. project.OutputDirectories
+            .Where(Directory.Exists)
+            .SelectMany(d => Directory.EnumerateDirectories(d, "*", SearchOption.AllDirectories))
+            .Where(d => project.Owns(d) && !Directory.EnumerateFileSystemEntries(d).Any())
+            .Distinct(StringComparer.Ordinal),
+    ];
+
     /// <summary>The files the project's last build says it wrote, in the list MSBuild's incremental clean reads.</summary>
     public static HashSet<string> Written(ProjectModel project)
     {

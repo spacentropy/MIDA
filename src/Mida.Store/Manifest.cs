@@ -4,11 +4,16 @@ namespace Mida.Store;
 
 /// <summary>What a key produced. Every path is relative to the repo root, and blobs are per file.</summary>
 /// <param name="BuildTime">How long the build that stored it took, which a hit reports as saved.</param>
+/// <param name="Directories">
+/// The empty directories, which a restore makes too: a web host takes its web root only from a wwwroot that exists.
+/// Null for none.
+/// </param>
 public sealed record Manifest(
     IReadOnlyList<ManifestFile> Files,
     IReadOnlyList<ManifestReference> References,
     IReadOnlyList<ManifestTarget> Targets,
-    TimeSpan BuildTime = default);
+    TimeSpan BuildTime = default,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Directories = null);
 
 /// <param name="Mode">Unix file mode, or null when written on Windows.</param>
 /// <param name="Tokenized">The blob holds tokens for this machine's paths, which a restore puts back. See <see cref="Relocation"/></param>
