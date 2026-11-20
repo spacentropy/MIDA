@@ -1,9 +1,11 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using static Mida.Tests.TestRepo;
 
 namespace Mida.Tests;
 
 /// <summary>The benchmark scenarios on the 8-project generated repo, with exact hit counts and exact failing tests from the graph.</summary>
-public sealed class GeneratedRepoTests : IDisposable
+public sealed partial class GeneratedRepoTests : IDisposable
 {
     private const int Count = 8;
 
@@ -110,7 +112,7 @@ public sealed class GeneratedRepoTests : IDisposable
         var repo = Generate("a");
         var tests = repo.Projects.Where(p => p.IsTest).ToList();
         var test = tests[0];
-        var needed = Needed(repo, test);
+        var needed = Needed(repo, test).Count;
         await Assert.That(needed).IsLessThan(Count);
         string[] filter = ["--include", $"*/{test.Name}.csproj"];
 
@@ -171,8 +173,66 @@ public sealed class GeneratedRepoTests : IDisposable
         await Assert.That(exitCode).IsEqualTo(1);
     }
 
-    /// <summary>How many projects a test project needs built: itself and everything it references, transitively.</summary>
-    private static int Needed(GeneratedRepo repo, GeneratedRepo.Project test)
+    /// <summary>
+    /// A project outside the chosen closure that asks a library inside it for one more target, as a web app asks a Razor
+    /// library for its static web assets. In a filtered run that library is asked for fewer targets, so it has another
+    /// key: the second filtered run must still hit it. With multiTargetEvery, multi-targeted nodes go through the smaller graph too.
+    /// </summary>
+    [Test]
+    [Arguments(0)]
+    [Arguments(3)]
+    public async Task FilteredRunHitsWhereOnlyAProjectOutsideItAddsTargets(int multiTargetEvery)
+    {
+        // net10.0;net11.0 needs SDK 11, which only the net11.0 host loads.
+        Skip.When(multiTargetEvery > 0 && Environment.Version.Major < 11, "Multi-targeted projects need SDK 11.");
+        const int Projects = 16;
+        var repo = GeneratedRepo.Generate(Path.Combine(temp, "a"), Projects, multiTargetEvery: multiTargetEvery);
+        var (test, needed, asker) = repo.Projects.Where(p => p.IsTest)
+            .Select(t => (Test: t, Needed: Needed(repo, t)))
+            .Where(t => multiTargetEvery == 0 || t.Needed.Any(n => repo.Projects.First(p => p.Name == n).Frameworks.Contains(';', StringComparison.Ordinal)))
+            .Select(t => (t.Test, t.Needed, Asker: repo.Projects.FirstOrDefault(p => !t.Needed.Contains(p.Name) && p.References.Any(t.Needed.Contains))))
+            .First(t => t.Asker is not null);
+        Write(repo.Root, "Directory.Build.targets", $"""
+            <Project>
+              <Target Name="MidaExtra" />
+              <ItemGroup Condition="'$(MSBuildProjectName)' == '{asker!.Name}'">
+                <ProjectReferenceTargets Include="Build" Targets="MidaExtra" />
+              </ItemGroup>
+            </Project>
+            """);
+        string[] filter = ["--include", $"*/{test.Name}.csproj"];
+
+        var (exitCode, output) = Test(repo, filter);
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+        var misses = int.Parse(HitsLine().Match(output).Groups[2].Value, CultureInfo.InvariantCulture);
+
+        var clone = GeneratedRepo.Generate(Path.Combine(temp, "b"), Projects, multiTargetEvery: multiTargetEvery);
+        Write(clone.Root, "Directory.Build.targets", File.ReadAllText(Path.Combine(repo.Root, "Directory.Build.targets")));
+        (exitCode, output) = Test(clone, filter);
+        await Assert.That(output).Contains($"{misses} hits, 0 misses");
+        await Assert.That(output).Contains(TestSummary(0, 0, 1));
+        await Assert.That(output).DoesNotContain("evaluated again");
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        // A whole run asks those libraries for the extra target, so their filtered entries, built without it, must not
+        // be their hits: on OrchardCore that target would be the static web assets'. Everything else in the closure hits.
+        var extra = asker.References.Count(r => needed.Contains(r) && !repo.Projects.First(p => p.Name == r).Frameworks.Contains(';', StringComparison.Ordinal));
+        if (multiTargetEvery == 0)
+        {
+            await Assert.That(extra).IsGreaterThan(0);
+        }
+
+        var whole = GeneratedRepo.Generate(Path.Combine(temp, "c"), Projects, multiTargetEvery: multiTargetEvery);
+        Write(whole.Root, "Directory.Build.targets", File.ReadAllText(Path.Combine(repo.Root, "Directory.Build.targets")));
+        output = Build(whole);
+        await Assert.That(output).Contains($"{misses - extra} hits, ");
+    }
+
+    [GeneratedRegex(@"(\d+) hits, (\d+) misses")]
+    private static partial Regex HitsLine();
+
+    /// <summary>What a test project needs built: itself and everything it references, transitively.</summary>
+    private static HashSet<string> Needed(GeneratedRepo repo, GeneratedRepo.Project test)
     {
         var byName = repo.Projects.ToDictionary(p => p.Name);
         var needed = new HashSet<string>();
@@ -188,7 +248,7 @@ public sealed class GeneratedRepoTests : IDisposable
             }
         }
 
-        return needed.Count;
+        return needed;
     }
 
     private static async Task AssertTestsFail(GeneratedRepo repo, HashSet<GeneratedRepo.Project> failing)

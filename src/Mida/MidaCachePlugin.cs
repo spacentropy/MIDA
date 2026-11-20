@@ -53,7 +53,9 @@ internal sealed class MidaCachePlugin(ProjectCache cache, string repoRoot) : Pro
                 cache.Revoke(project, served);
             }
         }
-        else if (!cache.IsAbsent(project))
+        // The walk keyed with the solution's target list. A narrowed graph can ask for fewer targets, which is another
+        // key, so the walk's miss says nothing of it: without this, mida test --include rebuilt such a node every run.
+        else if (!cache.IsAbsent(project) || !project.Targets.ToHashSet(StringComparer.Ordinal).SetEquals(buildRequest.TargetNames))
         {
             var properties = buildRequest.GlobalProperties.Select(p => KeyValuePair.Create(p.Name, p.EvaluatedValue));
             if (cache.ComputeKey(project, buildRequest.TargetNames, properties, logger.LogWarning) is not { } key)
