@@ -78,13 +78,31 @@ internal sealed record BuildOptions(
         Description = "Run every test project, also one whose pass is in the store.",
     };
 
+    private static readonly Option<string[]> IncludeOption = new("--include")
+    {
+        Description = "Run only the test projects whose path from the repo root matches one of these globs, such as 'tests/Unit/*'. '*' matches '/' too. Only what they need is built.",
+    };
+
+    private static readonly Option<string[]> ExcludeOption = new("--exclude")
+    {
+        Description = "Do not run the test projects whose path from the repo root matches this glob.",
+    };
+
+    private static readonly Option<string[]> CategoryOption = new("--category")
+    {
+        Description = "Run only the test projects whose MidaTestCategory property names one of these. Only what they need is built.",
+    };
+
     public static Command Command { get; } = CreateCommand("build", "Restore and build a solution through the cache.");
 
     /// <summary>Everything <c>build</c> takes, and after a <c>--</c> the arguments for each test project's runner, which the parser never sees.</summary>
     public static Command TestCommand { get; } = CreateCommand(
         "test",
         "Build as 'mida build' does, then run the test projects whose pass is not in the store. Arguments after -- go to each test project's runner.",
-        AllOption);
+        AllOption,
+        IncludeOption,
+        ExcludeOption,
+        CategoryOption);
 
     private static string DefaultCacheDirectory =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".mida", "cache");
@@ -123,7 +141,12 @@ internal sealed record BuildOptions(
             prefix,
             result.GetValue(ReadOnlyOption),
             result.GetValue(EvaluateOption),
-            runnerArguments is null ? null : new TestRun(result.GetValue(AllOption), runnerArguments));
+            runnerArguments is null ? null : new TestRun(
+                result.GetValue(AllOption),
+                runnerArguments,
+                result.GetValue(IncludeOption) ?? [],
+                result.GetValue(ExcludeOption) ?? [],
+                result.GetValue(CategoryOption) ?? []));
     }
 
     private static Command CreateCommand(string name, string description, params Option[] more)

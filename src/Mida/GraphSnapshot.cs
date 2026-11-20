@@ -21,6 +21,8 @@ internal sealed record GraphSnapshot(
 /// <param name="BuildTimeReferences">The referenced project files whose behaviour shapes this project's output, such as a generator's.</param>
 /// <param name="NoKey">Why no node of this project gets a key, though the graph alone would give it one.</param>
 /// <param name="Test">"mtp" for a Microsoft.Testing.Platform test project, "vstest" for a VSTest one, which mida test refuses. Null for any other project.</param>
+/// <param name="TestCategories">What MidaTestCategory names, split on ';', which mida test --category selects by.</param>
+/// <param name="StoreTestPasses">False when MidaStoreTestPasses is false: mida test then runs the project every time and stores no pass.</param>
 /// <param name="OwnedRoots">bin/ and obj/, where a hit may delete.</param>
 /// <param name="OwnCopies">Where the project's own items land in its output directory.</param>
 /// <param name="ExtensionsPath">Where restore writes, obj/ unless the project says otherwise.</param>
@@ -35,6 +37,8 @@ internal sealed record SnapshotProject(
     bool CrossTargeting,
     string? NoKey,
     string? Test,
+    IReadOnlyList<string> TestCategories,
+    bool StoreTestPasses,
     string? TargetRefPath,
     string? TargetPath,
     string OutDir,

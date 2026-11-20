@@ -28,6 +28,10 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
     /// <summary>How a test project runs, as <see cref="SnapshotProject.Test"/> says. Null for any other project.</summary>
     public string? Test => stored.Test;
 
+    public IReadOnlyList<string> TestCategories => stored.TestCategories;
+
+    public bool StoreTestPasses => stored.StoreTestPasses;
+
     /// <summary>The global property that tells an inner build from its outer build. Empty when not set.</summary>
     public string TargetFramework => Properties.GetValueOrDefault("TargetFramework", string.Empty);
 
@@ -63,7 +67,7 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
 internal sealed class GraphModel
 {
     private readonly Dictionary<(string Path, string TargetFramework), ProjectModel> keyed = [];
-    private readonly List<string> unkeyed = [];
+    private readonly List<(ProjectModel Project, string Why)> unkeyed = [];
     private readonly HashSet<ProjectModel> sharing;
 
     public GraphModel(IReadOnlyList<string> environment, IReadOnlyList<SnapshotProject> stored, PathTokens tokens)
@@ -102,7 +106,7 @@ internal sealed class GraphModel
                 }
                 else
                 {
-                    unkeyed.Add(why);
+                    unkeyed.Add((node, why));
                 }
             }
         }
@@ -138,8 +142,28 @@ internal sealed class GraphModel
     /// <summary>Every node, each after the nodes it references.</summary>
     public IReadOnlyList<ProjectModel> Projects { get; }
 
-    /// <summary>For each node that gets no key whatever its inputs, the reason, worded to follow a count.</summary>
-    public IReadOnlyList<string> Unkeyed => unkeyed;
+    /// <summary>Each node that gets no key whatever its inputs, with the reason, worded to follow a count.</summary>
+    public IReadOnlyList<(ProjectModel Project, string Why)> Unkeyed => unkeyed;
+
+    /// <summary>The nodes of the given projects, both inner and outer, and every node they reference.</summary>
+    public HashSet<ProjectModel> Closure(IEnumerable<ProjectModel> projects)
+    {
+        var paths = projects.Select(p => p.Path).ToHashSet(StringComparer.Ordinal);
+        var closure = new HashSet<ProjectModel>();
+        var pending = new Stack<ProjectModel>(Projects.Where(p => paths.Contains(p.Path)));
+        while (pending.TryPop(out var project))
+        {
+            if (closure.Add(project))
+            {
+                foreach (var reference in project.References)
+                {
+                    pending.Push(reference);
+                }
+            }
+        }
+
+        return closure;
+    }
 
     /// <summary>False for a path with no node or with several inner nodes, which then has no key.</summary>
     public bool TryGetProject(string path, string targetFramework, out ProjectModel project) => keyed.TryGetValue((path, targetFramework), out project!);

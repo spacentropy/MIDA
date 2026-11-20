@@ -19,8 +19,11 @@ internal interface IBuildHost : IDisposable
     /// <summary>Evaluates the graph and writes down what that depended on. Run after <see cref="Restore"/>.</summary>
     Evaluated Evaluate();
 
-    /// <summary>Builds what <see cref="ProjectCache.WalkAsync"/> left. False when the build failed.</summary>
-    bool Build(ProjectCache cache);
+    /// <summary>
+    /// Builds what <see cref="ProjectCache.WalkAsync"/> left, of the nodes in <paramref name="scope"/> only when it is
+    /// given. False when the build failed.
+    /// </summary>
+    bool Build(ProjectCache cache, IReadOnlySet<ProjectModel>? scope);
 }
 
 /// <summary>
@@ -101,7 +104,7 @@ internal sealed class MSBuildHost : IBuildHost
         return evaluated;
     }
 
-    public bool Build(ProjectCache cache)
+    public bool Build(ProjectCache cache, IReadOnlySet<ProjectModel>? scope)
     {
         if (graph is null)
         {
@@ -113,7 +116,36 @@ internal sealed class MSBuildHost : IBuildHost
 
         deferred.Plugin = new MidaCachePlugin(cache, checkout.RepoRoot);
         nodes!.GetAwaiter().GetResult();
-        return Manager.BuildRequest(new GraphBuildRequestData(graph, ["Build"])).OverallResult == BuildResultCode.Success;
+        var built = scope is null ? graph : Narrow(graph, scope);
+        return Manager.BuildRequest(new GraphBuildRequestData(built, ["Build"])).OverallResult == BuildResultCode.Success;
+    }
+
+    /// <summary>
+    /// The nodes of <paramref name="scope"/> and nothing else. Its entry points are the solution's that are in scope,
+    /// and its nodes the instances the solution evaluated, so each node has the global properties and the targets it
+    /// has there, and so the same key. A node the solution does not have is evaluated, with a warning.
+    /// </summary>
+    private ProjectGraph Narrow(ProjectGraph solution, IReadOnlySet<ProjectModel> scope)
+    {
+        var wanted = scope.Select(p => (p.Path, p.TargetFramework)).ToHashSet();
+        var instances = solution.ProjectNodes.Select(n => n.ProjectInstance).ToLookup(i => i.FullPath, StringComparer.Ordinal);
+        bool InScope(ProjectInstance i) => wanted.Contains((i.FullPath, i.GlobalProperties.TryGetValue("TargetFramework", out var framework) ? framework : string.Empty));
+        var narrowed = new ProjectGraph(
+            solution.EntryPointNodes.Select(n => n.ProjectInstance).Where(InScope).Select(i => new ProjectGraphEntryPoint(i.FullPath, i.GlobalProperties)),
+            collection,
+            (path, properties, projects) =>
+            {
+                if (instances[path].FirstOrDefault(i => i.GlobalProperties.Count == properties.Count
+                    && properties.All(p => i.GlobalProperties.TryGetValue(p.Key, out var value) && value == p.Value)) is { } evaluated)
+                {
+                    return evaluated;
+                }
+
+                Console.WriteLine($"warning: {path} is not a node of the solution with these properties, so it was evaluated again and may get another key");
+                return ProjectInstance.FromFile(path, new ProjectOptions { GlobalProperties = properties, ProjectCollection = projects });
+            });
+        Phase.Mark("narrowing the graph");
+        return narrowed;
     }
 
     public void Dispose()

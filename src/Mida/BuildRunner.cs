@@ -130,11 +130,28 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
                 }
             }
 
+            // With a filter, only the selected test projects and what they reference are built.
+            var tests = options.Test?.Select(graph, repoRoot);
+            HashSet<ProjectModel>? scope = null;
+            if (options.Test is { Filtered: true } && tests is not null)
+            {
+                // A mistyped glob or category must not read as a green run.
+                if (tests.Count == 0)
+                {
+                    Console.Error.WriteLine("mida: --include, --exclude and --category select no test project.");
+                    storing?.GetAwaiter().GetResult();
+                    return 1;
+                }
+
+                scope = graph.Closure(tests);
+                Console.WriteLine($"mida: {tests.Count} test nodes selected, building {scope.Count} of {graph.Projects.Count} graph nodes");
+            }
+
             var computer = new KeyComputer(repoRoot, graph.Environment, checkout.Hashes);
             var cache = new ProjectCache(graph, computer, outputs, repoRoot, options.ReadOnly);
-            var succeeded = cache.WalkAsync().GetAwaiter().GetResult();
+            var succeeded = cache.WalkAsync(scope).GetAwaiter().GetResult();
             Phase.Mark("hits");
-            succeeded = succeeded || (host ??= CreateHost(checkout)).Build(cache);
+            succeeded = succeeded || (host ??= CreateHost(checkout)).Build(cache, scope);
             Phase.Mark("build");
 
             // Ends the build session, which waits for the saves and says what they have to say.
@@ -150,11 +167,11 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
 
             Phase.Mark("storing the graph");
             Phase.End();
-            Report(cache, graph, source);
+            Report(cache, graph, source, scope);
 
             // Not after a failed build, which leaves the assemblies of an earlier one for a test to pass on.
             return !succeeded ? 1
-                : options.Test is { } test ? new TestRunner(graph, computer, store, test, options.ReadOnly, checkout.DotnetRoot).Run()
+                : options.Test is { } test ? new TestRunner(tests!, computer, store, test, options.ReadOnly, checkout.DotnetRoot).Run()
                 : 0;
         }
         finally
@@ -196,7 +213,7 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
             await ((ITokenAccess)await credential.Value).GetAccessTokenForRequestAsync(cancellationToken: token)));
     }
 
-    private void Report(ProjectCache cache, GraphModel graph, string source)
+    private void Report(ProjectCache cache, GraphModel graph, string source, HashSet<ProjectModel>? scope)
     {
         if (options.PrintKeys)
         {
@@ -222,10 +239,11 @@ internal sealed class BuildRunner(BuildOptions options, string sdkVersion, strin
         Console.WriteLine($"{cache.Keys.Count} keys in {seconds} s, {cache.Failures} not computable");
 
         // These are built on every run and are in neither count below, so without this line such a run reads as all hits.
-        if (graph.Unkeyed.Count > 0)
+        var unkeyed = graph.Unkeyed.Where(u => scope?.Contains(u.Project) ?? true).Select(u => u.Why).ToList();
+        if (unkeyed.Count > 0)
         {
-            var kinds = graph.Unkeyed.GroupBy(why => why, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Count()} {g.Key}");
-            Console.WriteLine($"{graph.Unkeyed.Count} nodes without a key: {string.Join(", ", kinds)}");
+            var kinds = unkeyed.GroupBy(why => why, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => $"{g.Count()} {g.Key}");
+            Console.WriteLine($"{unkeyed.Count} nodes without a key: {string.Join(", ", kinds)}");
         }
 
         var saved = cache.TimeSaved.TotalSeconds.ToString("F1", CultureInfo.InvariantCulture);

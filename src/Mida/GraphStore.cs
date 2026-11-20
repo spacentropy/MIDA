@@ -124,7 +124,8 @@ internal sealed class GraphStore(IObjectStore store, OutputCache blobs, Checkout
         }
     }
 
-    private static string ObjectKey(string key) => $"v1/graph/{key}";
+    // v2 since the test categories and MidaStoreTestPasses: a v1 graph would not read, and its key would never be stored again.
+    private static string ObjectKey(string key) => $"v2/graph/{key}";
 
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 

@@ -37,7 +37,7 @@ It restores with NuGet's static graph evaluation, which is faster and which NuGe
 ## Test
 
 ```sh
-mida test [<solution>] [the options of mida build] [--all] [-- <runner arguments>]
+mida test [<solution>] [the options of mida build] [--all] [--include <glob>] [--exclude <glob>] [--category <name>] [-- <runner arguments>]
 ```
 
 It builds as `mida build` does, then runs each test project that has not passed before with the same sources, packages, properties, SDK and runner arguments, in the project itself and in everything it references. A pass is stored, a failure is not. It ends with a summary such as `3 test projects run, 1 failed, 5 passed before, 12.4 s of test time saved`, and exits with the code of the first test project that failed.
@@ -45,9 +45,11 @@ It builds as `mida build` does, then runs each test project that has not passed 
 - What follows `--` goes to every test project's runner, such as `-- --report-trx`.
 - `--all` runs every test project, also one that passed before.
 - `--read-only` stores no pass either.
+- `--include` and `--exclude` choose test projects by their path from the repo root, such as `--include 'tests/Unit/*' --exclude '*.Integration.Tests.csproj'`. `*` matches `/` too. `--category` chooses those whose `MidaTestCategory` property names it, a `;` list such as `<MidaTestCategory>slow;db</MidaTestCategory>`. Each can be given more than once, and all three must agree. With any of them only the chosen test projects and what they reference are built, and a choice of none fails.
+- `<MidaStoreTestPasses>false</MidaStoreTestPasses>` in a project runs it every time and stores none of its passes. To store passes only for some projects, set it to `false` in `Directory.Build.props` and to `true` in those.
 - Test projects must use Microsoft.Testing.Platform, as TUnit does and as xUnit v3, NUnit and MSTest can. A VSTest project counts as failed. Each runs as its own application, as many at once as the machine has processors. Only a failed test project's output is shown. `RunArguments`, a `.runsettings` file named in the project and launch profiles are not applied.
 
-A test that depends on something outside its inputs, such as the clock, the network, a database or an environment variable, is not run again when only that changed. Run those with `--all`. See [docs/notes/mida-test.md](docs/notes/mida-test.md).
+A test that depends on something outside its inputs, such as the clock, the network, a database or an environment variable, is not run again when only that changed. Give such a project `MidaStoreTestPasses` false, or run with `--all`. See [docs/notes/mida-test.md](docs/notes/mida-test.md).
 
 ## CI
 

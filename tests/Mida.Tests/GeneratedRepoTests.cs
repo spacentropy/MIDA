@@ -104,6 +104,93 @@ public sealed class GeneratedRepoTests : IDisposable
         await Assert.That(exitCode).IsNotEqualTo(0);
     }
 
+    [Test]
+    public async Task FilterRunsOnlyTheSelectedTestAndBuildsOnlyWhatItNeeds()
+    {
+        var repo = Generate("a");
+        var tests = repo.Projects.Where(p => p.IsTest).ToList();
+        var test = tests[0];
+        var needed = Needed(repo, test);
+        await Assert.That(needed).IsLessThan(Count);
+        string[] filter = ["--include", $"*/{test.Name}.csproj"];
+
+        var (exitCode, output) = Test(repo, filter);
+        await Assert.That(output).Contains($"0 hits, {needed} misses");
+        await Assert.That(output).Contains(TestSummary(1, 0, 0));
+        await Assert.That(output).Contains($"mida: {test.Name}/{test.Name}.csproj passed");
+        await Assert.That(output).DoesNotContain("evaluated again");
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        // What the filtered run stored is what a whole run looks for, and the other way round: the keys do not depend on the filter.
+        (_, output) = Test(repo);
+        await Assert.That(output).Contains($"{needed} hits, {Count - needed} misses");
+        await Assert.That(output).Contains(TestSummary(tests.Count - 1, 0, 1));
+
+        var other = Path.Combine(temp, "other");
+        await Assert.That(Test(Generate("b"), "--cache", other).Output).Contains($"0 hits, {Count} misses");
+        (exitCode, output) = Test(Generate("c"), ["--cache", other, .. filter]);
+        await Assert.That(output).Contains($"{needed} hits, 0 misses");
+        await Assert.That(output).Contains(TestSummary(0, 0, 1));
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        // Everything else, and nothing of it built again.
+        (_, output) = Test(repo, "--exclude", $"*/{test.Name}.csproj");
+        await Assert.That(output).Contains(TestSummary(0, 0, tests.Count - 1));
+    }
+
+    [Test]
+    public async Task ProjectPropertiesChooseCategoriesAndWhichPassesAreStored()
+    {
+        var repo = Generate("a");
+        var tests = repo.Projects.Where(p => p.IsTest).ToList();
+        var (stored, slow) = (tests[0], tests[1]);
+
+        // Opt-in: no test project stores a pass but the one that says so.
+        Write(repo.Root, "Directory.Build.props", $"""
+            <Project>
+              <PropertyGroup>
+                <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+                <MidaStoreTestPasses>false</MidaStoreTestPasses>
+                <MidaStoreTestPasses Condition="'$(MSBuildProjectName)' == '{stored.Name}'">true</MidaStoreTestPasses>
+                <MidaTestCategory Condition="'$(MSBuildProjectName)' == '{slow.Name}'">slow; db</MidaTestCategory>
+              </PropertyGroup>
+            </Project>
+            """);
+        await Assert.That(Test(repo).Output).Contains(TestSummary(tests.Count, 0, 0));
+        await Assert.That(Test(repo).Output).Contains(TestSummary(tests.Count - 1, 0, 1));
+
+        var (exitCode, output) = Test(repo, "--category", "DB");
+        await Assert.That(output).Contains(TestSummary(1, 0, 0));
+        await Assert.That(output).Contains($"mida: {slow.Name}/{slow.Name}.csproj passed");
+        await Assert.That(exitCode).IsEqualTo(0).Because(output);
+
+        // A filter that selects nothing fails, so a typo cannot pass for a green run.
+        (exitCode, output) = Test(repo, "--category", "none");
+        await Assert.That(output).Contains("select no test project");
+        await Assert.That(output).DoesNotContain("test projects run");
+        await Assert.That(exitCode).IsEqualTo(1);
+    }
+
+    /// <summary>How many projects a test project needs built: itself and everything it references, transitively.</summary>
+    private static int Needed(GeneratedRepo repo, GeneratedRepo.Project test)
+    {
+        var byName = repo.Projects.ToDictionary(p => p.Name);
+        var needed = new HashSet<string>();
+        var pending = new Stack<string>([test.Name]);
+        while (pending.TryPop(out var name))
+        {
+            if (needed.Add(name))
+            {
+                foreach (var reference in byName[name].References)
+                {
+                    pending.Push(reference);
+                }
+            }
+        }
+
+        return needed.Count;
+    }
+
     private static async Task AssertTestsFail(GeneratedRepo repo, HashSet<GeneratedRepo.Project> failing)
     {
         foreach (var test in repo.Projects.Where(p => p.IsTest))

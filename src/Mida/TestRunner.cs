@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.IO.Enumeration;
 using System.Text;
 using Mida.Store;
 
@@ -7,22 +8,47 @@ namespace Mida;
 
 /// <param name="All">Run every test project, whatever the store says of it.</param>
 /// <param name="Arguments">What each test project's runner is given, which is part of a test key.</param>
-internal sealed record TestRun(bool All, IReadOnlyList<string> Arguments);
+/// <param name="Include">Globs over a test project's path from the repo root: it runs when it matches one, or there are none.</param>
+/// <param name="Exclude">Globs of test projects that do not run, whatever else matches them.</param>
+/// <param name="Categories">A test project runs only when its MidaTestCategory names one of these, or there are none.</param>
+internal sealed record TestRun(
+    bool All,
+    IReadOnlyList<string> Arguments,
+    IReadOnlyList<string> Include,
+    IReadOnlyList<string> Exclude,
+    IReadOnlyList<string> Categories)
+{
+    /// <summary>True when the run names which test projects to run, so the build is cut to what they need.</summary>
+    public bool Filtered => Include.Count + Exclude.Count + Categories.Count > 0;
+
+    /// <summary>The test nodes to run. An outer node has no assembly: its inner nodes are the tests, one per framework.</summary>
+    public List<ProjectModel> Select(GraphModel graph, string repoRoot) =>
+    [
+        .. graph.Projects.Where(p => p.Test is not null && !p.CrossTargeting && Selects(p, Path.GetRelativePath(repoRoot, p.Path).Replace('\\', '/'))),
+    ];
+
+    private bool Selects(ProjectModel test, string path) =>
+        (Include.Count == 0 || Include.Any(g => Matches(g, path)))
+        && !Exclude.Any(g => Matches(g, path))
+        && (Categories.Count == 0 || test.TestCategories.Any(c => Categories.Contains(c, StringComparer.OrdinalIgnoreCase)));
+
+    // '*' matches any run of characters, '/' included, so '**' works as well. '\' would escape, so it reads as '/'.
+    private static bool Matches(string glob, string path) =>
+        FileSystemName.MatchesSimpleExpression(glob.Replace('\\', '/'), path, ignoreCase: KeyComputer.PathComparison == StringComparison.OrdinalIgnoreCase);
+}
 
 /// <summary>
 /// Runs the test projects of a built graph whose pass is not in the store, and stores the passes. No MSBuild in it,
 /// so a run where everything hits and every test has passed before never loads MSBuild. See docs/notes/mida-test.md
 /// </summary>
-internal sealed class TestRunner(GraphModel graph, KeyComputer computer, IObjectStore store, TestRun run, bool readOnly, string dotnetRoot)
+/// <param name="tests">The test nodes <see cref="TestRun.Select"/> chose, in graph order.</param>
+internal sealed class TestRunner(List<ProjectModel> tests, KeyComputer computer, IObjectStore store, TestRun run, bool readOnly, string dotnetRoot)
 {
     private readonly Lock console = new();
 
     /// <summary>The exit code of the first test project in the graph that failed, as its runner gave it, or zero.</summary>
     public int Run()
     {
-        // An outer node has no assembly: its inner nodes are the tests, one per framework.
-        var tests = graph.Projects.Where(p => p.Test is not null && !p.CrossTargeting).ToList();
-
         // Two test nodes with one assembly both run whichever was built last, so a pass of either says nothing of its inputs.
         var shared = tests.GroupBy(t => t.TargetPath, StringComparer.Ordinal).Where(g => g.Count() > 1).SelectMany(g => g).ToHashSet();
 
@@ -68,9 +94,12 @@ internal sealed class TestRunner(GraphModel graph, KeyComputer computer, IObject
 
     private static string ObjectKey(CacheKey key) => $"v1/test/{key.Value}";
 
-    /// <summary>The test key, and how long the stored pass took. Neither for a VSTest project, which is refused when it starts.</summary>
+    /// <summary>
+    /// The test key, and how long the stored pass took. Neither for a VSTest project, which is refused when it starts,
+    /// nor for one that sets MidaStoreTestPasses to false, which runs every time.
+    /// </summary>
     private (CacheKey? Key, TimeSpan? Passed) Look(ProjectModel test) =>
-        test.Test == "mtp" && Key(test) is { } key
+        test.Test == "mtp" && test.StoreTestPasses && Key(test) is { } key
             ? (key, run.All ? null : PassedBefore(computer.Name(test), key))
             : (null, null);
 

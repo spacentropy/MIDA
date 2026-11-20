@@ -190,6 +190,8 @@ internal static partial class GraphEvaluation
             project.GetPropertyValue("IsTestingPlatformApplication").Equals("true", StringComparison.OrdinalIgnoreCase) ? "mtp"
                 : project.GetPropertyValue("IsTestProject").Equals("true", StringComparison.OrdinalIgnoreCase) ? "vstest"
                 : null,
+            project.GetPropertyValue("MidaTestCategory").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            !project.GetPropertyValue("MidaStoreTestPasses").Equals("false", StringComparison.OrdinalIgnoreCase),
             Token(Absolute(project, "TargetRefPath")),
             Token(Absolute(project, "TargetPath")),
             tokens.TokenizePath(KeyComputer.WithSeparator(Absolute(project, "OutDir") ?? project.Directory)),

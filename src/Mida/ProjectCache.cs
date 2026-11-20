@@ -51,12 +51,13 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
 
     /// <summary>
     /// Serves every hit whose dependencies all hit, dependencies first, so each reads the files of those before it.
-    /// True when that was every project, and then nothing is left for MSBuild to do.
+    /// True when that was every project, and then nothing is left for MSBuild to do. Only the nodes in
+    /// <paramref name="scope"/> when it is given, which must hold every node they reference.
     /// </summary>
-    public async Task<bool> WalkAsync()
+    public async Task<bool> WalkAsync(IReadOnlySet<ProjectModel>? scope = null)
     {
         var walked = new Dictionary<ProjectModel, Task<bool>>(graph.Projects.Count);
-        foreach (var project in graph.Projects)
+        foreach (var project in scope is null ? graph.Projects : graph.Projects.Where(scope.Contains))
         {
             var dependencies = project.References.Select(d => walked[d]).ToArray();
             walked[project] = Task.Run(async () => (await Task.WhenAll(dependencies)).All(hit => hit) && await TryServeAsync(project));

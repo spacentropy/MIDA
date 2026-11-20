@@ -335,7 +335,7 @@ public sealed class StoredGraphTests : IDisposable
     public async Task GraphThatCannotBeReadIsEvaluatedAgain()
     {
         Build(Checkout("a"));
-        foreach (var graph in Directory.GetFiles(Path.Combine(temp, "cache", "v1", "graph")))
+        foreach (var graph in Directory.GetFiles(Path.Combine(temp, "cache", "v2", "graph")))
         {
             File.WriteAllText(graph, "not a graph");
         }
