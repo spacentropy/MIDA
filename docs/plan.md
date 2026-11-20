@@ -252,7 +252,7 @@ In order. The first two are small and come before the milestone.
 
 - It has run on macOS arm64, Linux arm64 and, since 2026-11-10, Linux x64 on hosted runners and the pool, on two real repos of 227 and 270 projects. Windows has never been run.
 - Nothing evicts `~/.mida/cache`, so it grows without limit.
-- The GCS store meets an emulator in every CI run. A real bucket is reachable through `scripts/pool.sh` and `gcs.yml`, with the metadata server's credentials, and no result of such a run is recorded. Workload Identity Federation from CI, latency and egress cost are untested. A cold runner fetches each blob in its own request, with no retry.
+- The GCS store meets an emulator in `ci.yml` and the pool's real bucket in `gcs.yml`, `bench.yml` and `realworld.yml`, with the metadata server's credentials. Workload Identity Federation from CI and egress cost are untested: the bucket is in the pool's region. A cold runner fetches each blob in its own request, with no retry, so one 5xx is a miss, and a benchmark that expects exact hits then fails.
 - A stored graph stands for an evaluation only while the recorded questions cover everything the evaluation read. A read no question records gives a stale graph, so wrong keys. What is known to escape is refused at store time ([stored-graph.md](notes/stored-graph.md#when-it-is-not-used)).
 - The plugin API was experimental until recently and moved namespace between SDK 8 and 10, so a future SDK can break it. The fallback is driving `dotnet build` per project ourselves; keys and the store would not change.
 - Real source generators are untested: the build-time dependency rule was checked with a plain library.
