@@ -62,6 +62,23 @@ A `dotnet test` that a test starts inherits `TESTINGPLATFORM_DOTNETTEST_EXECUTIO
 
 Since 2026-11-20 `bench.yml` and `realworld.yml` put the pool's test bucket behind every cache, through `MIDA_BENCH_BUCKET`, as CI has it. A run that fills a cache writes it to its local directory and to a prefix of its own in the bucket. A run with a filled cache starts from an empty local directory, as on a fresh runner, and reads that prefix with `--read-only`, as on a pull request, so that its misses do not change what the next repetition finds. Its misses therefore store nothing, which a push to `main` would. The bucket is in the pool's region, so egress is not measured. Without the variable, as on a laptop, every cache stays local. The first run through the bucket compares with a last run that had none.
 
+The first run through the bucket, 2026-11-20, commit `9b86cf5`, at 1024 projects, one run of each job, beside the last column of [Profiling on the pool](#profiling-on-the-pool-2026-11-20), which had the same mida and a local cache. Its own "last run" column compared with a run before both tiering changes.
+
+| scenario | local cache | through the bucket | result |
+|---|---|---|---|
+| Fresh | 0.79 | 0.79 | 1024 misses |
+| TestFresh | 0.98 | 1.01 | 1024 misses, 231 test projects run |
+| Unchanged | 0.48 | 0.53 | 1024 hits |
+| BodyEdit | 0.55 | 0.61 | 1023 hits, 1 miss |
+| ApiEdit | 0.59 | 0.63 | 950 hits, 74 misses |
+| TestUnchanged | 0.44 | 0.50 | 1024 hits, 231 passes from the bucket |
+| TestBodyEdit | 0.52 | 0.58 | 11 test projects run, 220 passed before |
+| TestApiEdit | 0.56 | 0.59 | the same |
+
+- Uploading costs an empty cache almost nothing: `Fresh` did not move and `TestFresh` moved by 0.03.
+- Fetching costs a filled cache 0.04 to 0.06 of a plain build, 5 to 7 s at these sizes: `Unchanged` took 58.5 s against a plain 110.9 s. The bucket is in the pool's region, so a runner elsewhere pays more, and egress.
+- No store warning in any job.
+
 Each summary also says what the runner is: CPU model, memory, disk and how fast that disk writes and reads. For each of the three repetitions it says what the whole machine did meanwhile: CPU busy, iowait and steal, and the memory left.
 
 First numbers, 2026-11-10, Ubuntu 24.04 x64 with 4 processors, two runs of commit `6a619fd`, from before the summary said what the runner is:
