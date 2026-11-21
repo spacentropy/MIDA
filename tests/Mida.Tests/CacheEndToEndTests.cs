@@ -737,6 +737,18 @@ public sealed class CacheEndToEndTests : IDisposable
         ?? Environment.GetEnvironmentVariable("NUGET_PACKAGES")
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
 
+    // SDK 11 writes a hot reload script with a new key in it on every Debug build of a web app, and lists it among the
+    // app's endpoints. A comment edit builds the app again, and its tests must still hit.
+    [Test]
+    public async Task WebAppBuiltAgainKeepsItsTestsHitting()
+    {
+        Build(WebRepo("a"));
+        var clone = WebRepo("b");
+        File.AppendAllText(Path.Combine(clone, "Web", "Program.cs"), "// edited\n");
+
+        await Assert.That(Build(clone)).Contains("2 hits, 1 misses");
+    }
+
     [Test]
     public async Task WebCleanCloneAtAnotherPathIsAllHitsAndServesItsAssets()
     {

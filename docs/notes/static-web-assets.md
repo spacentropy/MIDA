@@ -43,7 +43,7 @@ The files are chosen by name, never by content, since a PDB holds the root too:
 
 The user decided both on 2026-11-12.
 
-1. **SDK 11's hot reload key pair is left out of the cache.** `browser-tools-key.private.json` and `.public.json` in `obj/.../HotReload/` are new on every Debug build of a Web SDK project. The SDK's `EnsureHotReloadBrowserToolsKey` writes them, and its targets name `Microsoft.DotNet.Watch.BrowserToolsBuildOutputs` as the reader, so `dotnet watch`, which builds anyway. A private key does not belong in a shared bucket. The asset that embeds the public key is stored as built.
+1. **SDK 11's hot reload key pair is left out of the cache.** `browser-tools-key.private.json` and `.public.json` in `obj/.../HotReload/` are new on every Debug build of a Web SDK project. The SDK's `EnsureHotReloadBrowserToolsKey` writes them, and its targets name `Microsoft.DotNet.Watch.BrowserToolsBuildOutputs` as the reader, so `dotnet watch`, which builds anyway. A private key does not belong in a shared bucket. The asset that embeds the public key is stored as built. Its endpoints, `_framework/Microsoft.NET.Sdk.BlazorWeb.HotReload.BrowserTools.Config.*`, are left out of the `dependency-assets` hash since 2026-11-21: their integrity, and even their fingerprint and cache headers, differ on every build, so each time a web app was built its dependents missed. OrchardCore showed it once its CMS web app built on every run, and `WebAppBuiltAgainKeepsItsTestsHitting` checks it.
 2. **A non-deterministic asset is stored.** On SDK 11 the fingerprint of that generated asset is new on every build. Every hit serves the writer's, which is consistent within the entry.
 
 ## Measured

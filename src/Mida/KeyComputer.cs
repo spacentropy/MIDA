@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Mida.Store;
 
@@ -159,13 +160,31 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
             ];
     });
 
-    // Without the times, which are the sources' and so differ in every checkout.
+    // Without the times, which are the sources' and so differ in every checkout. Without SDK 11's hot reload script
+    // either: it holds the key pair every Debug build makes anew, see docs/notes/static-web-assets.md
     private string? AssetsHash(ProjectModel project)
     {
         var endpoints = OutputNames(project).Where(n => n.EndsWith(".staticwebassets.endpoints.json", StringComparison.Ordinal)).ToList();
         return endpoints.Count == 0 ? null : CacheKey.From(endpoints.Select(n =>
-            $"{n} {Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(LastModified().Replace(File.ReadAllText(Path.Combine(project.OutDir, n)), string.Empty))))}")).Value;
+            $"{n} {Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(LastModified().Replace(WithoutBrowserTools(File.ReadAllText(Path.Combine(project.OutDir, n))), string.Empty))))}")).Value;
     }
+
+    private static string WithoutBrowserTools(string json)
+    {
+        if (!json.Contains(BrowserTools, StringComparison.Ordinal) || JsonNode.Parse(json) is not JsonObject manifest || manifest["Endpoints"] is not JsonArray endpoints)
+        {
+            return json;
+        }
+
+        foreach (var endpoint in endpoints.Where(e => e?["Route"]?.GetValue<string>().StartsWith(BrowserTools, StringComparison.Ordinal) == true).ToList())
+        {
+            endpoints.Remove(endpoint);
+        }
+
+        return manifest.ToJsonString();
+    }
+
+    private const string BrowserTools = "_framework/Microsoft.NET.Sdk.BlazorWeb.HotReload.BrowserTools.Config.";
 
     [GeneratedRegex("\"Last-Modified\",\"Value\":\"[^\"]*\"")]
     private static partial Regex LastModified();

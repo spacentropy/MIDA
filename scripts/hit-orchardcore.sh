@@ -28,6 +28,11 @@ touch "$work/marker"
 echo "== d, every project a hit"; summary "$results/hit-d.txt"; built
 echo "== keys that differ between c and d"
 diff -r "$work/keys-c" "$work/keys-d" | cut -c1-300 | head -40 || true
+echo "== the web app's static web asset endpoints, built in c and in d, one value a line"
+web=src/OrchardCore.Cms.Web/bin/Debug/net10.0/OrchardCore.Cms.Web.staticwebassets.endpoints.json
+for name in c d; do tr ',{}[]' '\n' <"$work/$name/$web" | grep -v '^$' > "$work/endpoints-$name.txt"; done
+wc -l "$work/endpoints-c.txt" "$work/endpoints-d.txt"
+diff "$work/endpoints-c.txt" "$work/endpoints-d.txt" | grep -v 'GMT"$' | cut -c1-250 | head -40 || true
 
 bin=test/OrchardCore.Tests/bin/Debug/net10.0
 echo "== MvcTestingAppManifest.json in c, then d"
