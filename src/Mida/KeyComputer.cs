@@ -89,7 +89,8 @@ internal sealed partial class KeyComputer(string repoRoot, IReadOnlyList<string>
         lines.AddRange(globalProperties
             .Where(p => IsKeyed(p.Key))
             .Select(p => $"property {p.Key}={p.Value.Replace(repoRoot, "{RepoRoot}", PathComparison)}"));
-        lines.AddRange(project.Inputs.Select(f => inputLines.GetOrAdd(f, InputLine)));
+        // What MidaSourceOutputs names is the build's, so a checkout that built before keys as a clean clone does.
+        lines.AddRange(project.Inputs.Where(f => !project.DeclaresSource(f)).Select(f => inputLines.GetOrAdd(f, InputLine)));
 
         if (project.AssetsFile is { } assets && File.Exists(assets))
         {

@@ -17,12 +17,17 @@ for name in c d; do
 done
 
 tests=(--include '*/OrchardCore.Tests.csproj')
-summary() { sed 's/\x1b\[[0-9;]*m//g' "$1" | grep -E 'hits, |test projects run|OrchardCore.Tests +Total: ' || true; }
+summary() { sed 's/\x1b\[[0-9;]*m//g' "$1" | grep -E 'hits, |test projects run|OrchardCore.Tests +Total: |not stored|not used|Graph ' | sed "s#$work/##g" | sort -u || true; }
 
-(cd "$work/c" && mida test OrchardCore.slnx --cache "$work/cache" "${tests[@]}" > "$results/hit-c.txt" 2>&1) || true
+(cd "$work/c" && mida test OrchardCore.slnx --cache "$work/cache" --key-details "$work/keys-c" "${tests[@]}" > "$results/hit-c.txt" 2>&1) || true
 echo "== c"; summary "$results/hit-c.txt"
-(cd "$work/d" && mida test OrchardCore.slnx --cache "$work/cache" --all "${tests[@]}" > "$results/hit-d.txt" 2>&1) || true
-echo "== d, every project a hit"; summary "$results/hit-d.txt"
+# The projects MSBuild built since the marker: its incremental clean writes a file list, which a hit does not restore.
+built() { find "$work/d" -name '*.FileListAbsolute.txt' -newer "$work/marker" | sed "s#$work/d/##" | sort; }
+touch "$work/marker"
+(cd "$work/d" && mida test OrchardCore.slnx --cache "$work/cache" --key-details "$work/keys-d" --all "${tests[@]}" > "$results/hit-d.txt" 2>&1) || true
+echo "== d, every project a hit"; summary "$results/hit-d.txt"; built
+echo "== keys that differ between c and d"
+diff -r "$work/keys-c" "$work/keys-d" | cut -c1-300 | head -40 || true
 
 bin=test/OrchardCore.Tests/bin/Debug/net10.0
 echo "== MvcTestingAppManifest.json in c, then d"
@@ -47,6 +52,7 @@ for name in c d; do
 done
 
 rm -rf "$work/c"
+touch "$work/marker"
 (cd "$work/d" && mida test OrchardCore.slnx --cache "$work/cache" --all "${tests[@]}" > "$results/hit-d-alone.txt" 2>&1) || true
-echo "== d again, with c gone"; summary "$results/hit-d-alone.txt"
+echo "== d again, with c gone"; summary "$results/hit-d-alone.txt"; built
 sed 's/\x1b\[[0-9;]*m//g' "$results/hit-d-alone.txt" | grep -A2 '\[FAIL\]$' | head -12 || true

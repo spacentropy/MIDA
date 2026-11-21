@@ -25,6 +25,7 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
     private readonly ConcurrentQueue<Task> saves = new();
     private readonly ConcurrentQueue<(bool Warning, string Text)> messages = new();
     private readonly ConcurrentDictionary<ProjectModel, long> missStarts = new();
+    private readonly ConcurrentDictionary<ProjectModel, Dictionary<string, (long Length, long Time)>> sourceTrees = new();
     private long keyTicks;
     private long savedTicks;
     private int failures;
@@ -187,6 +188,19 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
             warn($"Outputs of {project.Path} not cleared: {e.Message}");
         }
 
+        // Without it the build is not stored, see SaveAsync.
+        if (!readOnly)
+        {
+            try
+            {
+                sourceTrees[project] = ProjectOutputs.SourceTree(project, graph.NotSource);
+            }
+            catch (Exception e) when (IsCacheFailure(e, CancellationToken.None))
+            {
+                warn($"Source tree of {project.Path} not read: {e.Message}");
+            }
+        }
+
         Interlocked.Increment(ref misses);
         // A graph build asks once its dependencies are built, so this times the project's own build.
         missStarts[project] = Stopwatch.GetTimestamp();
@@ -243,12 +257,29 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
     {
         try
         {
+            // A hit makes only what the entry holds, so a build that wrote anywhere else in the source tree is not stored.
+            // What MidaSourceOutputs names is stored whole, also what was there before: a checkout that built before
+            // has it already, and a clean clone that hits needs it.
+            if (!sourceTrees.TryRemove(project, out var before))
+            {
+                messages.Enqueue((true, $"Outputs of {project.Path} not stored: its source tree was not read before the build"));
+                return;
+            }
+
+            var after = ProjectOutputs.SourceTree(project, graph.NotSource);
             var outputs = ProjectOutputs.Scan(project);
+            if (ProjectOutputs.UndeclaredWrite(project, before, after, outputs.ToHashSet(StringComparer.FromComparison(KeyComputer.PathComparison))) is { } written)
+            {
+                messages.Enqueue((true, $"Outputs of {project.Path} not stored: its build wrote {written}, outside bin/ and obj/. Name it in MidaSourceOutputs to store it"));
+                return;
+            }
+
+            var declared = after.Keys.Where(project.DeclaresSource).ToList();
             var copies = computer.DependencyCopies(project, outputs);
             var stored = await cache.SaveAsync(
                 key.Value,
-                outputs.Where(f => !copies.ContainsKey(f)),
-                ProjectOutputs.EmptyDirectories(project),
+                outputs.Where(f => !copies.ContainsKey(f)).Union(declared.Where(File.Exists), StringComparer.Ordinal),
+                ProjectOutputs.EmptyDirectories(project).Concat(declared.Where(d => Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any())),
                 // In a shared directory a dependency's file is its own source, and a restore would delete it before copying.
                 [.. copies.Where(c => c.Key != c.Value).Select(c => new ManifestReference(Name(c.Key), Name(c.Value))).OrderBy(r => r.Path, StringComparer.Ordinal)],
                 targets,
@@ -277,10 +308,11 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
     private void Accept(ProjectModel project, Manifest manifest)
     {
         var paths = Paths(manifest).ToList();
-        // A directory is not in the record: a miss deletes files only, and an empty directory left is harmless.
-        if (paths.Concat((manifest.Directories ?? []).Select(d => Path.GetFullPath(d, repoRoot))).FirstOrDefault(p => !project.Outputs(p)) is { } outside)
+        // A directory is not in the record: a miss deletes files only, and an empty directory left is harmless. What
+        // MidaSourceOutputs names is, but no delete reads it there: see Restored.
+        if (paths.Concat((manifest.Directories ?? []).Select(d => Path.GetFullPath(d, repoRoot))).FirstOrDefault(p => !project.Outputs(p) && !project.DeclaresSource(p)) is { } outside)
         {
-            throw new InvalidDataException($"{outside} is outside the output directories of {project.Path}");
+            throw new InvalidDataException($"{outside} is outside the output directories of {project.Path} and what its MidaSourceOutputs names");
         }
 
         if (!graph.Shares(project))

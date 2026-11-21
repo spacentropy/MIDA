@@ -24,6 +24,10 @@ internal sealed record GraphSnapshot(
 /// <param name="TestCategories">What MidaTestCategory names, split on ';', which mida test --category selects by.</param>
 /// <param name="StoreTestPasses">False when MidaStoreTestPasses is false: mida test then runs the project every time and stores no pass.</param>
 /// <param name="OwnedRoots">bin/ and obj/, where a hit may delete.</param>
+/// <param name="SourceOutputs">
+/// What MidaSourceOutputs names, split on ';': paths or patterns under the project's directory that its build writes,
+/// outside bin/ and obj/. A hit writes them too, and never deletes there.
+/// </param>
 /// <param name="OwnCopies">Where the project's own items land in its output directory.</param>
 /// <param name="ExtensionsPath">Where restore writes, obj/ unless the project says otherwise.</param>
 internal sealed record SnapshotProject(
@@ -44,6 +48,7 @@ internal sealed record SnapshotProject(
     string OutDir,
     IReadOnlyList<string> OutputDirectories,
     IReadOnlyList<string> OwnedRoots,
+    IReadOnlyList<string> SourceOutputs,
     IReadOnlyList<string> OwnCopies,
     string? PackageRoot,
     string? ExtensionsPath);

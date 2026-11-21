@@ -203,6 +203,11 @@ internal static partial class GraphEvaluation
                     .Select(tokens.TokenizePath),
             ],
             [.. OwnedRootProperties.Select(p => Absolute(project, p)).OfType<string>().Select(KeyComputer.WithSeparator).Select(tokens.TokenizePath)],
+            [
+                .. project.GetPropertyValue("MidaSourceOutputs")
+                    .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(p => p.Replace('\\', '/').TrimEnd('/')),
+            ],
             [.. OwnCopies(project)],
             project.GetPropertyValue("NuGetPackageRoot") is { Length: > 0 } packages ? tokens.TokenizePath(packages) : null,
             Token(Absolute(project, "MSBuildProjectExtensionsPath")));

@@ -39,6 +39,56 @@ internal static class ProjectOutputs
             .Distinct(StringComparer.Ordinal),
     ];
 
+    /// <summary>
+    /// What the project's directory holds outside <paramref name="skipped"/> and .git: each file with its size and last
+    /// write time, each directory with -1. A build that changes it writes into the source tree, which a hit would not.
+    /// The project's own output directories outside bin/ and obj/ are looked at: BuildPrediction takes the destination
+    /// of any Copy for one, such as OrchardCore's Localization/.
+    /// </summary>
+    public static Dictionary<string, (long Length, long Time)> SourceTree(ProjectModel project, IReadOnlySet<string> skipped)
+    {
+        var own = project.OutputDirectories.Where(d => !project.Owns(d)).ToHashSet(StringComparer.FromComparison(KeyComputer.PathComparison));
+        var tree = new Dictionary<string, (long Length, long Time)>(StringComparer.FromComparison(KeyComputer.PathComparison));
+        var pending = new Stack<DirectoryInfo>([new DirectoryInfo(project.Directory)]);
+        while (pending.TryPop(out var directory))
+        {
+            foreach (var entry in directory.EnumerateFileSystemInfos())
+            {
+                if (entry is FileInfo file)
+                {
+                    tree[file.FullName] = (file.Length, file.LastWriteTimeUtc.Ticks);
+                }
+                else if (entry.Name != ".git" && KeyComputer.WithSeparator(entry.FullName) is var path && (!skipped.Contains(path) || own.Contains(path)))
+                {
+                    tree[entry.FullName] = (-1, -1);
+                    if (entry.LinkTarget is null)
+                    {
+                        pending.Push((DirectoryInfo)entry);
+                    }
+                }
+            }
+        }
+
+        return tree;
+    }
+
+    /// <summary>
+    /// The first path the build wrote into the source tree that neither MidaSourceOutputs names nor <paramref name="stored"/>
+    /// holds: a new or changed file, or a new empty directory. A new directory with something in it is told by what is in it.
+    /// </summary>
+    public static string? UndeclaredWrite(
+        ProjectModel project,
+        Dictionary<string, (long Length, long Time)> before,
+        Dictionary<string, (long Length, long Time)> after,
+        IReadOnlySet<string> stored) =>
+        after.Where(e => !project.DeclaresSource(e.Key)
+                && !stored.Contains(e.Key)
+                && (!before.TryGetValue(e.Key, out var was) || was != e.Value)
+                && (e.Value.Length >= 0 || !Directory.EnumerateFileSystemEntries(e.Key).Any()))
+            .Select(e => e.Key)
+            .Order(StringComparer.Ordinal)
+            .FirstOrDefault();
+
     /// <summary>The files the project's last build says it wrote, in the list MSBuild's incremental clean reads.</summary>
     public static HashSet<string> Written(ProjectModel project)
     {

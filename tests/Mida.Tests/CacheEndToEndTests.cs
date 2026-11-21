@@ -504,6 +504,54 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(Directory.Exists(Path.Combine(clone, "Tests", "bin", "Debug", "net10.0", "wwwroot"))).IsTrue();
     }
 
+    // As OrchardCore's CMS web app copies translations from packages into Localization/ and makes wwwroot/, in its own
+    // directory. The second build in the writer finds both there already, and still stores them.
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task BuildThatWritesIntoItsSourceTreeIsStoredOnlyWhenItSaysWhere(bool declared)
+    {
+        string Writing(string relativePath)
+        {
+            var root = Checkout(relativePath);
+            Edit(root, "LibB/LibB.csproj", "</Project>", $"""
+                  <PropertyGroup>{(declared ? "<MidaSourceOutputs>Localization;wwwroot</MidaSourceOutputs>" : string.Empty)}</PropertyGroup>
+                  <Target Name="WriteSource" AfterTargets="Build">
+                    <MakeDir Directories="$(MSBuildProjectDirectory)/wwwroot" />
+                    <Copy SourceFiles="data.txt" DestinationFolder="Localization/fr" SkipUnchangedFiles="true" />
+                  </Target>
+                </Project>
+                """);
+            return root;
+        }
+
+        var writer = Writing("a");
+        var first = Build(writer);
+        const string Edited = """=> "edited";""";
+        Edit(writer, "LibB/B.cs", """=> "b";""", Edited);
+        var output = Build(writer);
+
+        var clone = Writing("b");
+        Edit(clone, "LibB/B.cs", """=> "b";""", Edited);
+        var hit = Build(clone);
+
+        if (declared)
+        {
+            await Assert.That(output).DoesNotContain("not stored");
+            await Assert.That(hit).Contains("5 hits, 0 misses");
+            await Assert.That(File.ReadAllText(Path.Combine(clone, "LibB", "Localization", "fr", "data.txt"))).IsEqualTo("data");
+            await Assert.That(Directory.Exists(Path.Combine(clone, "LibB", "wwwroot"))).IsTrue();
+        }
+        else
+        {
+            // Only a build that finds neither there yet can tell. The writer's second build finds both and stores, but under
+            // a key with the copied file as an input, which the clone does not have yet: it misses and refuses again.
+            // macOS names the temporary directory through /private, so only the end of the path is compared.
+            await Assert.That(first).Contains($"{Path.Combine("a", "LibB", "LibB.csproj")} not stored: its build wrote");
+            await Assert.That(hit).Contains("not stored: its build wrote");
+        }
+    }
+
     // A local database, a log, a file put there by hand: MSBuild deletes only what it wrote, and so does mida.
     [Test]
     public async Task FileTheAppWroteIntoBinSurvivesMissesAndHits()

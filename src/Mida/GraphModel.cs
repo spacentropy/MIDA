@@ -1,3 +1,5 @@
+using System.IO.Enumeration;
+
 namespace Mida;
 
 /// <summary>
@@ -60,6 +62,26 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
 
     /// <summary>True for a path in bin/ or obj/, which hold nothing but what builds write.</summary>
     public bool Owns(string path) => OwnedRoots.Any(o => path.StartsWith(o, KeyComputer.PathComparison));
+
+    /// <summary>The project's directory, with a separator at the end.</summary>
+    public string Directory { get; } = KeyComputer.WithSeparator(System.IO.Path.GetDirectoryName(tokens.DetokenizePath(stored.Path))!);
+
+    /// <summary>
+    /// True for a path under the project's directory that MidaSourceOutputs names, or that is under one it names. A
+    /// pattern goes through FileSystemName, where * matches / too. It cannot name anything outside the directory.
+    /// </summary>
+    public bool DeclaresSource(string path)
+    {
+        if (stored.SourceOutputs.Count == 0 || !path.StartsWith(Directory, KeyComputer.PathComparison))
+        {
+            return false;
+        }
+
+        var relative = path[Directory.Length..].Replace('\\', '/');
+        var ignoreCase = KeyComputer.PathComparison == StringComparison.OrdinalIgnoreCase;
+        return stored.SourceOutputs.Any(p => FileSystemName.MatchesSimpleExpression(p, relative, ignoreCase)
+            || relative.StartsWith(p + "/", KeyComputer.PathComparison));
+    }
 
     private static string? Place(string? path, PathTokens tokens) => path is null ? null : tokens.DetokenizePath(path);
 }
@@ -138,6 +160,14 @@ internal sealed class GraphModel
     }
 
     public IReadOnlyList<string> Environment { get; }
+
+    /// <summary>
+    /// What a look at a project's source tree skips, each with a separator at the end: every project's directory, bin/,
+    /// obj/ and output directories. Another project inside one writes there in parallel, and outputs are no source.
+    /// </summary>
+    public HashSet<string> NotSource => field ??= Projects
+        .SelectMany(p => p.OutputDirectories.Concat(p.OwnedRoots).Append(p.Directory))
+        .ToHashSet(StringComparer.FromComparison(KeyComputer.PathComparison));
 
     /// <summary>Every node, each after the nodes it references.</summary>
     public IReadOnlyList<ProjectModel> Projects { get; }
