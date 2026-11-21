@@ -315,6 +315,14 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
             throw new InvalidDataException($"{outside} is outside the output directories of {project.Path} and what its MidaSourceOutputs names");
         }
 
+        // What MidaSourceOutputs names is not in the key, so a source file there that was edited would be written over.
+        // shortcut: a tokenized file there always differs, so it always misses. Compare it detokenized if one turns up.
+        if (manifest.Files.Select(f => (Full: Path.GetFullPath(f.Path, repoRoot), f.Hash))
+            .FirstOrDefault(f => !project.Outputs(f.Full) && File.Exists(f.Full) && OutputCache.Hash(f.Full) != f.Hash) is { Full: { } edited })
+        {
+            throw new InvalidDataException($"{edited} differs from what the entry holds, and MidaSourceOutputs names it");
+        }
+
         if (!graph.Shares(project))
         {
             var record = project.Record!;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Why OrchardCore.Tests fails after a hit: a whole mida test in clone c fills the cache, clone d hits everything, and
 # this prints what d's test output names of c, then runs d's tests again once c is gone, as on a CI runner.
-# Usage, from the repo root: scripts/pool.sh PROJECT REGION 'bash scripts/hit-orchardcore.sh' 7200s
+# Usage, from the repo root: scripts/pool.sh PROJECT REGION '[DECLARE=1] bash scripts/hit-orchardcore.sh' 7200s
 set -euo pipefail
 
 mkdir -p TestResults
@@ -15,6 +15,14 @@ for name in c d; do
   git clone -q "$work/source" "$work/$name"
   git -C "$work/$name" remote set-url origin https://github.com/OrchardCMS/OrchardCore
 done
+
+# DECLARE=1 has the web app name what its build writes into its own directory, so mida stores it.
+if [ -n "${DECLARE:-}" ]; then
+  for name in c d; do
+    sed -i 's#</Project>#<PropertyGroup><MidaSourceOutputs>Localization;wwwroot</MidaSourceOutputs></PropertyGroup></Project>#' \
+      "$work/$name/src/OrchardCore.Cms.Web/OrchardCore.Cms.Web.csproj"
+  done
+fi
 
 tests=(--include '*/OrchardCore.Tests.csproj')
 summary() { sed 's/\x1b\[[0-9;]*m//g' "$1" | grep -E 'hits, |test projects run|OrchardCore.Tests +Total: |not stored|not used|Graph ' | sed "s#$work/##g" | sort -u || true; }

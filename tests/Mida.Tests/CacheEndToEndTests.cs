@@ -552,6 +552,28 @@ public sealed class CacheEndToEndTests : IDisposable
         }
     }
 
+    // A name in MidaSourceOutputs takes its files out of the key, so one that also holds a source must not be written over.
+    [Test]
+    public async Task HitDoesNotWriteOverAnEditedFileThatMidaSourceOutputsNames()
+    {
+        string Declaring(string relativePath)
+        {
+            var root = Checkout(relativePath);
+            Edit(root, "LibB/LibB.csproj", "</Project>", "<PropertyGroup><MidaSourceOutputs>wwwroot</MidaSourceOutputs></PropertyGroup></Project>");
+            Write(root, "LibB/wwwroot/site.txt", "source");
+            return root;
+        }
+
+        Build(Declaring("a"));
+        var clone = Declaring("b");
+        Write(clone, "LibB/wwwroot/site.txt", "edited");
+
+        var output = Build(clone);
+
+        await Assert.That(output).Contains("differs from what the entry holds");
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "LibB", "wwwroot", "site.txt"))).IsEqualTo("edited");
+    }
+
     // A local database, a log, a file put there by hand: MSBuild deletes only what it wrote, and so does mida.
     [Test]
     public async Task FileTheAppWroteIntoBinSurvivesMissesAndHits()
