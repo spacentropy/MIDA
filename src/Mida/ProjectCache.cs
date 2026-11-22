@@ -310,7 +310,9 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
         var paths = Paths(manifest).ToList();
         // A directory is not in the record: a miss deletes files only, and an empty directory left is harmless. What
         // MidaSourceOutputs names is, but no delete reads it there: see Restored.
-        if (paths.Concat((manifest.Directories ?? []).Select(d => Path.GetFullPath(d, repoRoot))).FirstOrDefault(p => !project.Outputs(p) && !project.DeclaresSource(p)) is { } outside)
+        // A directory may be anywhere under bin/ and obj/: see ProjectOutputs.EmptyDirectories.
+        if ((paths.FirstOrDefault(p => !project.Outputs(p) && !project.DeclaresSource(p))
+            ?? (manifest.Directories ?? []).Select(d => Path.GetFullPath(d, repoRoot)).FirstOrDefault(d => !project.Owns(d) && !project.DeclaresSource(d))) is { } outside)
         {
             throw new InvalidDataException($"{outside} is outside the output directories of {project.Path} and what its MidaSourceOutputs names");
         }

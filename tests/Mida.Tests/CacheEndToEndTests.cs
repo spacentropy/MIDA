@@ -483,13 +483,17 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(ManifestsNaming("README.md")).IsEqualTo(0);
     }
 
-    // As OrchardCore's tests make theirs: a web host takes its web root only from a wwwroot that exists.
+    // As OrchardCore's tests make theirs: a web host takes its web root only from a wwwroot that exists. With one
+    // framework in TargetFrameworks the outer build makes bin/Debug/wwwroot as well, outside every output directory.
     [Test]
-    public async Task EmptyDirectoryTheBuildMakesIsThereAfterAHit()
+    [Arguments("<TargetFramework>net10.0</TargetFramework>", "5 hits", false)]
+    [Arguments("<TargetFrameworks>net10.0</TargetFrameworks>", "6 hits", true)]
+    public async Task EmptyDirectoryTheBuildMakesIsThereAfterAHit(string framework, string hits, bool outer)
     {
         string Making(string relativePath)
         {
             var root = Checkout(relativePath);
+            Edit(root, "Tests/Tests.csproj", "<TargetFramework>net10.0</TargetFramework>", framework);
             Edit(root, "Tests/Tests.csproj", "</Project>", """
                   <Target Name="MakeWebRoot" BeforeTargets="Build"><MakeDir Directories="$(OutputPath)wwwroot" /></Target>
                 </Project>
@@ -500,8 +504,11 @@ public sealed class CacheEndToEndTests : IDisposable
         Build(Making("a"));
         var clone = Making("b");
 
-        await Assert.That(Build(clone)).Contains(AllHits);
-        await Assert.That(Directory.Exists(Path.Combine(clone, "Tests", "bin", "Debug", "net10.0", "wwwroot"))).IsTrue();
+        await Assert.That(Build(clone)).Contains($"{hits}, 0 misses");
+        foreach (var directory in outer ? new[] { "net10.0/wwwroot", "wwwroot" } : ["net10.0/wwwroot"])
+        {
+            await Assert.That(Directory.Exists(Path.Combine(clone, "Tests", "bin", "Debug", directory))).IsTrue().Because(directory);
+        }
     }
 
     // As OrchardCore's CMS web app copies translations from packages into Localization/ and makes wwwroot/, in its own

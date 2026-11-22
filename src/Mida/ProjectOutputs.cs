@@ -28,14 +28,16 @@ internal static class ProjectOutputs
 
     /// <summary>
     /// The empty directories under bin/ and obj/, which a hit must make too: OrchardCore's tests make bin/.../wwwroot,
-    /// and without it the web host has no web root. Outside them a directory can be the repo's own.
+    /// and without it the web host has no web root. Outside them a directory can be the repo's own. Also an outer
+    /// node's and outside the output directories: OrchardCore.Tests' outer build makes bin/Debug/wwwroot. Nothing
+    /// deletes a directory, so one an earlier build left is harmless.
     /// </summary>
-    public static List<string> EmptyDirectories(ProjectModel project) => project.CrossTargeting ? [] :
+    public static List<string> EmptyDirectories(ProjectModel project) =>
     [
-        .. project.OutputDirectories
+        .. project.OwnedRoots
             .Where(Directory.Exists)
             .SelectMany(d => Directory.EnumerateDirectories(d, "*", SearchOption.AllDirectories))
-            .Where(d => project.Owns(d) && !Directory.EnumerateFileSystemEntries(d).Any())
+            .Where(d => !Directory.EnumerateFileSystemEntries(d).Any())
             .Distinct(StringComparer.Ordinal),
     ];
 
