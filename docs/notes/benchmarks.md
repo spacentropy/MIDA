@@ -269,10 +269,10 @@ The last row reverses the plan's "Restore: not cached". Restore outputs hold abs
 
 Built and first run 2026-11-11: `tests/Mida.Tests/RealWorld.cs` (`[Explicit]`) and `.github/workflows/realworld.yml`, which runs only when dispatched: on GitHub's hosted runners until 2026-11-19, on the Cloud Build pool since, with a 3-hour limit per job. The pool's account can reach only the two buckets in `scripts/pool-setup.sh`, so the other people's code these jobs build could at worst touch other builds' logs and results there. One test per repo, each a pinned tag:
 
-| test | repo | tag | solution | projects | SDK its `global.json` selects |
-|---|---|---|---|---|---|
-| `OrchardCore` | OrchardCMS/OrchardCore, a runnable CMS | `v3.0.1` | `OrchardCore.slnx` | 227 | 10.0.200, `latestMajor`: the newest installed |
-| `Abp` | abpframework/abp, a library | `10.7.1` | `framework/Volo.Abp.slnx` | 270 | 10.0.100, `latestFeature`: SDK 10 |
+| repo | projects | SDK its `global.json` selects |
+|---|---|---|
+| a web CMS, runnable | 227 | 10.0.200, `latestMajor`: the newest installed |
+| an application framework, a library | 270 | 10.0.100, `latestFeature`: SDK 10 |
 
 A test clones the tag once, restores there to fill the package cache, and then builds clean clones of that clone, each at its own path:
 
@@ -285,68 +285,68 @@ It hashes every file under a `bin` directory, with each mention of the checkout'
 
 `RealWorld/Local`, `LocalTests` and `LocalEdits`, added 2026-11-19, run the same on a repo on this machine: `MIDA_LOCAL_REPO` is the folder that holds the solution, which may be inside the git repo, `MIDA_LOCAL_SOLUTION` the solution, `MIDA_LOCAL_BRANCH` the branch, `main` unless set, and `MIDA_LOCAL_MAYFAIL` the test projects that may fail. The repo is cloned, so its own tree is left alone. `LocalEdits` fills the cache once, then times a plain build beside `mida build` after a comment in 1 and in 10 projects, and after a new public type in 1 and in 10. Run locally, these check correctness only: since 2026-11-19 only a run on Google Cloud Build gives times to report ([AGENTS.md](../../AGENTS.md)).
 
-`RealWorld/OrchardCoreTests`, added 2026-11-17, times `dotnet test --solution` beside `mida test` with an empty cache, then `mida test` in a clean clone at another path with the cache filled. It fails unless that last run runs exactly the test projects that failed before and takes the rest from the store. A test project that fails upstream is listed in the report, with the whole output in the `.txt` beside it, and does not fail the test. Abp has no such test: its tests are on xUnit v2 and VSTest, which `mida test` refuses. First run, macOS arm64 with 16 processors, the build beside the tests:
+The real-world test of the web CMS's test projects, added 2026-11-17, times `dotnet test --solution` beside `mida test` with an empty cache, then `mida test` in a clean clone at another path with the cache filled. It fails unless that last run runs exactly the test projects that failed before and takes the rest from the store. A test project that fails upstream is listed in the report, with the whole output in the `.txt` beside it, and does not fail the test. The framework has no such test: its tests are on an older test framework and VSTest, which `mida test` refuses. First run, macOS arm64 with 16 processors, the build beside the tests:
 
 | repo | dotnet test | mida test, empty cache | mida / dotnet | mida test, filled cache | mida / dotnet |
 |---|---|---|---|---|---|
-| OrchardCore v3.0.1 | 67.8 s | 68.2 s | 1.00 | 11.6 s | 0.17 |
+| the web CMS | 67.8 s | 68.2 s | 1.00 | 11.6 s | 0.17 |
 
-Four test projects. `OrchardCore.Tests.Functional` failed in every run, `dotnet test`'s too, because its Playwright browser was not installed, so the filled run ran it again and took the other three from the store. The build comparison on the same day still had 448 hits and no node without a key: 44.8 s, 48.0 s (1.07) and 7.7 s (0.17).
+Four test projects. One, a browser-driven test project whose browser was not installed, failed in every run, `dotnet test`'s too, so the filled run ran it again and took the other three from the store. The build comparison on the same day still had 448 hits and no node without a key: 44.8 s, 48.0 s (1.07) and 7.7 s (0.17).
 
-The same on GitHub Actions on 2026-11-17, `ubuntu-latest` x64, four processors, commit `462f77a`: 237.3 s for `dotnet test`, 229.8 s with an empty cache (0.97) and 19.0 s with a filled one (0.08), which ran only `OrchardCore.Tests.Functional` again. The run before it, at `5a295db`, also failed `OrchardCore.Tests` in both mida runs, on one test of 2,298 (`DefaultPlacementIsReturnedByDefault`, among Lucene lock timeouts), and passed it in the next: flaky upstream.
+The same on GitHub Actions on 2026-11-17, `ubuntu-latest` x64, four processors, commit `462f77a`: 237.3 s for `dotnet test`, 229.8 s with an empty cache (0.97) and 19.0 s with a filled one (0.08), which ran only the browser-driven test project again. The run before it, at `5a295db`, also failed the main unit test project in both mida runs, on one test of 2,298 (among search index lock timeouts), and passed it in the next: flaky upstream.
 
-`RealWorld/McpTests`, added 2026-11-18, does the same for microsoft/mcp at `Fabric.Mcp.Server-1.8.0` (`Microsoft.Mcp.slnx`, 167 projects, none multi-targeted, SDK 10.0.403 `latestFeature`). Every run passes `-p:CopilotNpmRegistryUrl=https://registry.npmjs.org`, because `CopilotCliTester` downloads the Copilot CLI at build time from an Azure DevOps feed that answers 401 outside Microsoft. A plain `dotnet test --solution` on macOS arm64 with 16 processors ran 80 test projects and 21,418 tests in 13.5 minutes, and four test projects failed, which the test allows: `Azure.Mcp.Core.Tests` expects the commit in its informational version, which `IncludeSourceRevisionInInformationalVersion=false` leaves out; `ResiliencyAgent.Tests` and `Deploy.Tests` could not restore their recordings through the test proxy's git step; `Azure.Mcp.Server.Tests` needs `pwsh`. On GitHub Actions only the first of the four failed. A built checkout is 26 GB, mostly packages copied into every test project's `bin`; the runner had 86 GB free.
+A second test, added 2026-11-18, does the same for an SDK repo with 80 test projects, at a pinned tag (167 projects, none multi-targeted, SDK 10.0.403 `latestFeature`). Every run passes a property that points one project's download at the public npm registry, because that project downloads a CLI at build time from a private feed that answers 401 outside the repo's owner. A plain `dotnet test --solution` on macOS arm64 with 16 processors ran 80 test projects and 21,418 tests in 13.5 minutes, and four test projects failed, which the test allows: the core test project expects the commit in its informational version, which `IncludeSourceRevisionInInformationalVersion=false` leaves out; two others could not restore their recordings through the test proxy's git step; the server's test project needs `pwsh`. On GitHub Actions only the first of the four failed. A built checkout is 26 GB, mostly packages copied into every test project's `bin`; the runner had 86 GB free.
 
 First run on GitHub Actions, 2026-11-18, `ubuntu-latest` x64, four processors, commit `23f2402`, passed:
 
 | repo | dotnet test | mida test, empty cache | mida / dotnet | mida test, filled cache | mida / dotnet |
 |---|---|---|---|---|---|
-| mcp Fabric.Mcp.Server-1.8.0 | 680.5 s | 631.8 s | 0.93 | 82.5 s | 0.12 |
+| the SDK repo | 680.5 s | 631.8 s | 0.93 | 82.5 s | 0.12 |
 
-167 keys and 167 hits. The filled run ran `Azure.Mcp.Core.Tests` again, which failed in every run, and took the other 79 from the store. In the same run OrchardCore's tests were 214.0 s, 208.2 s (0.97) and 16.4 s (0.08), its build 145.3 s, 160.6 s (1.11) and 13.6 s (0.09), and Abp's build 125.1 s, 173.9 s (1.39) and 102.1 s (0.82).
+167 keys and 167 hits. The filled run ran the core test project again, which failed in every run, and took the other 79 from the store. In the same run the web CMS's tests were 214.0 s, 208.2 s (0.97) and 16.4 s (0.08), its build 145.3 s, 160.6 s (1.11) and 13.6 s (0.09), and the framework's build 125.1 s, 173.9 s (1.39) and 102.1 s (0.82).
 
-`RealWorld/Aspire`, added 2026-11-18, builds dotnet/aspire at `v17.0.0` (`Aspire.slnx`, 483 projects, 74 multi-targeted, SDK 11.0.100), as a build comparison only, since its tests need Docker. Aspire's own CI builds through Arcade's `./build.sh`, but the solution builds with `dotnet build` as well, given one thing: Arcade's `RepoLayout.props` sets `NuGetPackageRoot` to `<repo>/.packages/` when `ContinuousIntegrationBuild` is true and `NUGET_PACKAGES` is not set. A restore without that property fills the default folder, and the build then looks in `.packages/`: every netstandard2.0 project loses `NETStandard.Library.targets`, whose import is conditioned on `Exists`, and 3,510 errors follow. So the test sets `NUGET_PACKAGES` to the default folder when it is unset. With it the plain parallel build took 88 s on macOS with a warm package folder, 0 warnings, and a built checkout is 17 GB. The same holds for any Arcade repo under `mida build`, which always sets `ContinuousIntegrationBuild`; what mida does there without `NUGET_PACKAGES` is not tried.
+The real-world test of a cloud app stack, added 2026-11-18, builds it at a pinned tag (483 projects, 74 multi-targeted, SDK 11.0.100), as a build comparison only, since its tests need Docker. The app stack's own CI builds through its shared build SDK's `./build.sh`, but the solution builds with `dotnet build` as well, given one thing: that build SDK's props set `NuGetPackageRoot` to `<repo>/.packages/` when `ContinuousIntegrationBuild` is true and `NUGET_PACKAGES` is not set. A restore without that property fills the default folder, and the build then looks in `.packages/`: every netstandard2.0 project loses `NETStandard.Library.targets`, whose import is conditioned on `Exists`, and 3,510 errors follow. So the test sets `NUGET_PACKAGES` to the default folder when it is unset. With it the plain parallel build took 88 s on macOS with a warm package folder, 0 warnings, and a built checkout is 17 GB. The same holds for any repo on that build SDK under `mida build`, which always sets `ContinuousIntegrationBuild`; what mida does there without `NUGET_PACKAGES` is not tried.
 
-Its first runs found two mida bugs. A build-time reference to a project without a key threw `KeyNotFoundException` (it now says `its build-time reference X has no key`), which costs 118 nodes here, all through `Aspire.Hosting.Tasks` on `net10.0;net472`. And `Aspire.Hosting.Blazor`'s `Gateway.cs`, written outside its output directories, was missing after a hit, so a dependent's copy failed; such a project now gets no key ([relocation.md](relocation.md)), three here. The comparison skips files that come and go in a directory where the two plain builds' names differed too, such as fingerprinted `.wasm` files, and `artifacts/bin/replace-text.cs/`, a script's own build that no project owns. First passing run, macOS arm64, 16 processors, 2026-11-18:
+Its first runs found two mida bugs. A build-time reference to a project without a key threw `KeyNotFoundException` (it now says `its build-time reference X has no key`), which costs 118 nodes here, all through one build-tasks project on `net10.0;net472`. And a source file that one Blazor hosting project writes outside its output directories was missing after a hit, so a dependent's copy failed; such a project now gets no key ([relocation.md](relocation.md)), three here. The comparison skips files that come and go in a directory where the two plain builds' names differed too, such as fingerprinted `.wasm` files, and a folder under `artifacts/bin/` that holds a script's own build that no project owns. First passing run, macOS arm64, 16 processors, 2026-11-18:
 
 | repo | dotnet build | mida build, empty cache | mida / dotnet | mida build, filled cache | mida / dotnet |
 |---|---|---|---|---|---|
-| Aspire v17.0.0 | 138.0 s | 168.5 s | 1.22 | 70.0 s | 0.51 |
+| the app stack | 138.0 s | 168.5 s | 1.22 | 70.0 s | 0.51 |
 
 282 keys, 282 hits; 222 nodes without a key (219 multi-targeted, 3 that copy a file written outside their outputs) and 118 whose key could not be computed. Cache 1,063 MB. The run before, with the same code but the stricter comparison, gave 0.90 and 0.44.
 
-First run on GitHub Actions, 2026-11-18, `ubuntu-latest` x64, four processors, commit `68eef76`, all five real-world tests passed. Aspire: 476.1 s plain, 444.5 s empty (0.93), 215.8 s filled (0.45), the same counts as on macOS and the same files as `dotnet build`. In the same run: OrchardCore 0.10, Abp 0.80, OrchardCore's tests 0.08, mcp's tests 0.12, each with the key counts of the runs before, so the new rule took no keys there.
+First run on GitHub Actions, 2026-11-18, `ubuntu-latest` x64, four processors, commit `68eef76`, all five real-world tests passed. The app stack: 476.1 s plain, 444.5 s empty (0.93), 215.8 s filled (0.45), the same counts as on macOS and the same files as `dotnet build`. In the same run: the web CMS 0.10, the framework 0.80, the web CMS's tests 0.08, the SDK repo's tests 0.12, each with the key counts of the runs before, so the new rule took no keys there.
 
 First runs on the Cloud Build pool, 2026-11-19, Ubuntu 26.04 x64, 22 processors, the medians of 3 runs under BenchmarkDotNet, every test passed:
 
 | test | commit | plain | mida, empty cache | mida / plain | mida, filled cache | mida / plain |
 |---|---|---|---|---|---|---|
-| OrchardCore | `296b218` | 65.0 s | 70.7 s | 1.09 | 7.8 s | 0.12 |
-| Abp | `296b218` | 41.3 s | 61.4 s | 1.49 | 32.0 s | 0.77 |
-| Aspire | `7f12fd1` | 203.1 s | 208.6 s | 1.03 | 96.9 s | 0.48 |
-| OrchardCoreTests | `d1a6a0c` | 101.3 s | 101.7 s | 1.00 | 9.4 s | 0.09 |
-| McpTests | `0882a70` | 327.3 s | 344.0 s | 1.05 | 41.4 s | 0.13 |
+| web CMS | `296b218` | 65.0 s | 70.7 s | 1.09 | 7.8 s | 0.12 |
+| framework | `296b218` | 41.3 s | 61.4 s | 1.49 | 32.0 s | 0.77 |
+| app stack | `7f12fd1` | 203.1 s | 208.6 s | 1.03 | 96.9 s | 0.48 |
+| web CMS tests | `d1a6a0c` | 101.3 s | 101.7 s | 1.00 | 9.4 s | 0.09 |
+| SDK repo tests | `0882a70` | 327.3 s | 344.0 s | 1.05 | 41.4 s | 0.13 |
 
-- Every mida build left the same files under `bin` as `dotnet build`, and every filled `mida test` ran only what had failed with the empty cache: 1 of mcp's 80 test projects.
-- The key counts match the runs before: Aspire 282 keys and 282 hits, with 219 multi-targeted nodes, 3 under the copies rule and 118 not computable.
-- Getting there took four fixes, none of them in mida. The SDK image sets `NUGET_XMLDOC_MODE=skip`, which failed Aspire's `ConfigurationSchema.json` check, so `cloudbuild.yaml` unsets it. Aspire's playground references `Aspire.Hosting.Analyzers` with `TargetFramework=netstandard2.0` and the solution without, so plain `dotnet build` built it twice at once, and 2 of 4 plain builds on 22 processors failed on its `deps.json`: the test passes `SkipAspireHostingAnalyzersReference=true` to every build. mcp's test proxy prints "restore failed with exit code 1", which counted as a failed project until only mida's lines counted. And `scripts/pool.sh` reads the build's status every 30 s, since `gcloud builds log --stream` asks every second and 14 jobs at once passed the project's 600 requests a minute.
-- On the pool, git in `Azure.Mcp.Tools.VirtualDesktop.Tests` could not reach github.com for 131 s in all three mida runs with an empty cache and in none of the plain ones, so it may fail. Whether `mida test` running more test projects at once than `dotnet test` brought that on is not checked.
-- Aspire has 539 files that differ between its three plain builds, 322 of them DLLs. They are not compared, so a file mida got wrong among them would not show.
+- Every mida build left the same files under `bin` as `dotnet build`, and every filled `mida test` ran only what had failed with the empty cache: 1 of the SDK repo's 80 test projects.
+- The key counts match the runs before: the app stack 282 keys and 282 hits, with 219 multi-targeted nodes, 3 under the copies rule and 118 not computable.
+- Getting there took four fixes, none of them in mida. The SDK image sets `NUGET_XMLDOC_MODE=skip`, which failed the app stack's configuration schema check, so `cloudbuild.yaml` unsets it. The app stack's sample projects reference its analyzers project with `TargetFramework=netstandard2.0` and the solution without, so plain `dotnet build` built it twice at once, and 2 of 4 plain builds on 22 processors failed on its `deps.json`: the test passes the repo's property that skips that reference to every build. The SDK repo's test proxy prints "restore failed with exit code 1", which counted as a failed project until only mida's lines counted. And `scripts/pool.sh` reads the build's status every 30 s, since `gcloud builds log --stream` asks every second and 14 jobs at once passed the project's 600 requests a minute.
+- On the pool, git in one of the SDK repo's test projects could not reach github.com for 131 s in all three mida runs with an empty cache and in none of the plain ones, so it may fail. Whether `mida test` running more test projects at once than `dotnet test` brought that on is not checked.
+- The app stack has 539 files that differ between its three plain builds, 322 of them DLLs. They are not compared, so a file mida got wrong among them would not show.
 - With 22 processors a plain build is 2 to 3 times faster than on a hosted runner and a hit is not, as for the benchmark above, so these ratios do not compare with the hosted runners'.
 
 How busy the 22 processors were, the same day, commit `ae0c7f2`, run 44531779329, in which all five passed again with ratios within 0.06 of the table above. Each is the range over the three runs of a side, as the share of all processors busy and in iowait:
 
 | test | plain | mida, empty cache | mida, filled cache |
 |---|---|---|---|
-| Aspire | 80 to 84%, 0 to 2% | 84 to 87%, 0% | 72 to 74%, 2 to 3% |
-| Abp | 59 to 73%, 1 to 2% | 72 to 74%, 0% | 82%, 0% |
-| OrchardCore | 68 to 74%, 1% | 69 to 70%, 0 to 1% | 29 to 31%, 4 to 5% |
-| OrchardCoreTests | 57 to 59%, 0 to 1% | 57 to 59%, 0 to 1% | 27 to 28%, 1 to 4% |
-| McpTests | 20 to 24%, 4 to 6% | 21 to 24%, 5 to 6% | 5%, 43 to 47% |
+| app stack | 80 to 84%, 0 to 2% | 84 to 87%, 0% | 72 to 74%, 2 to 3% |
+| framework | 59 to 73%, 1 to 2% | 72 to 74%, 0% | 82%, 0% |
+| web CMS | 68 to 74%, 1% | 69 to 70%, 0 to 1% | 29 to 31%, 4 to 5% |
+| web CMS tests | 57 to 59%, 0 to 1% | 57 to 59%, 0 to 1% | 27 to 28%, 1 to 4% |
+| SDK repo tests | 20 to 24%, 4 to 6% | 21 to 24%, 5 to 6% | 5%, 43 to 47% |
 
 - A plain build of a large repo keeps 13 to 18 of the 22 busy on average, and mida with an empty cache the same, so neither saturates the machine and both would slow on fewer.
-- With a filled cache, what is left decides. Aspire and Abp rebuild their multi-targeted projects, so they stay CPU-bound. OrchardCore, which hits everywhere, uses 6 or 7 processors. mcp's filled run waits on the disk, as the benchmark's hits do.
-- mcp's tests keep only about 5 processors busy under either runner: they wait on the test proxy and on replayed calls, not on the CPU.
+- With a filled cache, what is left decides. The app stack and the framework rebuild their multi-targeted projects, so they stay CPU-bound. The web CMS, which hits everywhere, uses 6 or 7 processors. The SDK repo's filled run waits on the disk, as the benchmark's hits do.
+- The SDK repo's tests keep only about 5 processors busy under either runner: they wait on the test proxy and on replayed calls, not on the CPU.
 - These are averages over a run, which hide peaks and stretches on one processor.
 
 The same on a second pool, `mida-8`, c3-highcpu-8 workers with 8 processors and 16 GB, 2026-11-19, commit `b883b53`, benchmark run 44540603533 and real-world run 44540611329, every test passed. Its disk wrote 1 GiB at 205 MB/s, against 558 MB/s on `mida`: Google Cloud caps a disk's throughput partly by the machine's processors. Ratios, mida over plain, 8 processors beside 22:
@@ -361,14 +361,14 @@ The same on a second pool, `mida-8`, c3-highcpu-8 workers with 8 processors and 
 | Benchmark TestUnchanged | 124.7 s | | 0.43, 0.32 |
 | Benchmark TestBodyEdit | 121.9 s | | 0.53, 0.48 |
 | Benchmark TestApiEdit | 123.3 s | | 0.60, 0.52 |
-| Aspire | 377.6 s | 0.97, 1.03 | 0.47, 0.49 |
-| Abp | 71.2 s | 1.49, 1.56 | 0.87, 0.82 |
-| OrchardCore | 129.0 s | 1.06, 1.05 | 0.10, 0.12 |
-| OrchardCoreTests | 171.4 s | 1.03, 1.03 | 0.08, 0.10 |
-| McpTests | 429.8 s | 1.10, 1.08 | 0.26, 0.13 |
+| app stack | 377.6 s | 0.97, 1.03 | 0.47, 0.49 |
+| framework | 71.2 s | 1.49, 1.56 | 0.87, 0.82 |
+| web CMS | 129.0 s | 1.06, 1.05 | 0.10, 0.12 |
+| web CMS tests | 171.4 s | 1.03, 1.03 | 0.08, 0.10 |
+| SDK repo tests | 429.8 s | 1.10, 1.08 | 0.26, 0.13 |
 
 - A plain build took 1.9 to 2.4 times as long on 8 processors, and kept 74 to 86% of them busy, so the CPU limits it there.
-- A run that restores much from the cache waits on the slower disk: the benchmark's `Unchanged` 86% in iowait, mcp's filled run 79%. Those ratios got worse, mcp's twice as bad. Where little is restored or much is rebuilt, the ratio barely moved.
+- A run that restores much from the cache waits on the slower disk: the benchmark's `Unchanged` 86% in iowait, the SDK repo's filled run 79%. Those ratios got worse, the SDK repo's twice as bad. Where little is restored or much is rebuilt, the ratio barely moved.
 - An empty-cache build got relatively cheaper, since the plain build beside it waits on the disk too.
 - So on 8 processors the disk, not the processors, is what a hit needs.
 - Since 2026-11-19 `mida-8` is the only pool, and the machine mida is tuned for: a small machine with a slow disk is closer to a developer's or a typical CI runner's than 22 processors, and it shows the cost of a hit instead of hiding it. The numbers above it are on `mida`, the 22-processor pool, which was removed that day.
@@ -379,51 +379,51 @@ The baseline on `mida-8` to optimize from, 2026-11-19, commit `63f697b`, benchma
 |---|---|---|---|
 | Benchmark Fresh / Unchanged / BodyEdit / ApiEdit | 111.6 to 112.6 s | 0.91 | 0.48 / 0.59 / 0.62 |
 | Benchmark TestFresh / TestUnchanged / TestBodyEdit / TestApiEdit | 120.7 to 124.7 s | 1.11 | 0.44 / 0.53 / 0.59 |
-| Aspire | 395.0 s | 0.89 | 0.43 |
-| Abp | 72.1 s | 1.47 | 0.87 |
-| OrchardCore | 127.7 s | 1.06 | 0.10 |
-| OrchardCoreTests | 176.0 s | 1.01 | 0.08 |
-| McpTests | 432.0 s | 1.06 | 0.26 |
+| app stack | 395.0 s | 0.89 | 0.43 |
+| framework | 72.1 s | 1.47 | 0.87 |
+| web CMS | 127.7 s | 1.06 | 0.10 |
+| web CMS tests | 176.0 s | 1.01 | 0.08 |
+| SDK repo tests | 432.0 s | 1.06 | 0.26 |
 
-Every ratio is within 0.04 of the first run on `mida-8` above, except Aspire's empty cache, 0.89 against 0.97, whose plain build took 395.0 s against 377.6 s.
+Every ratio is within 0.04 of the first run on `mida-8` above, except the app stack's empty cache, 0.89 against 0.97, whose plain build took 395.0 s against 377.6 s.
 
-Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/OrchardCore" --output Detailed`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses OrchardCore on a machine that also has SDK 11.
+Run one: `dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/<test>" --output Detailed`, with the test's name in place of `<test>`. The net11.0 build of mida loads either SDK, and the net10.0 build refuses the web CMS on a machine that also has SDK 11.
 
 First run, 2026-11-11, in an OrbStack container on four pinned cores, Ubuntu 24.04 arm64, ext4 loop image, SDK 10.0.402 and 11.0.100, mida's net11.0 build from the working tree. Both tests passed:
 
 | repo | dotnet build | mida build, empty cache | mida / dotnet | mida build, filled cache | mida / dotnet | filled cache |
 |---|---|---|---|---|---|---|
-| Abp 10.7.1 | 51.9 s | 68.4 s | 1.32 | 60.0 s | 1.16 | 163 keys, 122 hits, 41 misses |
-| OrchardCore v3.0.1 | 85.8 s | 91.9 s | 1.07 | 95.6 s | 1.11 | 0 keys |
+| the framework | 51.9 s | 68.4 s | 1.32 | 60.0 s | 1.16 | 163 keys, 122 hits, 41 misses |
+| the web CMS | 85.8 s | 91.9 s | 1.07 | 95.6 s | 1.11 | 0 keys |
 
-- Abp: 56,397 files under `bin`, of which 450 differ between the two plain builds, by their names mostly test projects' executables and assemblies. Every other file is the same after both mida builds. The two plain builds took 75.2 s and 51.9 s, so one run each says little about the ratio.
-- Abp's 41 misses in an unchanged clone are all "static web assets name this checkout": 33 of the 45 Web and Razor SDK projects and 8 projects that copy their manifests. All 163 keys are the same at both paths. Neither build said so, because that line went to MSBuild's logger as a message and the console logger is quiet. It is now printed as a `mida:` line.
-- OrchardCore gets no keys: every project sets `TargetFrameworks`, with the one value `net10.0`, and a multi-targeted project is not cached. So this run compared three plain builds. Fixed 2026-11-12 ([cache-key.md](cache-key.md)), and the same test then gave 448 keys, two for each project: 88.5 s plain, 119.0 s with an empty cache (1.34), and 76.9 s with a filled one (0.87) on 339 hits and 109 misses. Which projects miss is not looked at yet.
-- Abp again on 2026-11-12, once static web asset manifests were stored with tokens ([static-web-assets.md](static-web-assets.md)), same container on a 48 GB ext4 image (12 GB ran out): 49.2 s plain (the faster of 69.0 s and 49.2 s), 65.4 s with an empty cache (1.33), and 37.0 s with a filled one (0.75) on 163 hits and 0 misses, against 1.16 and 41 misses before. Both mida builds left the same files under `bin` as `dotnet build`, and neither said "not stored" or "different outputs". Cache 1,007 MB.
-- Both on GitHub Actions on 2026-11-12, `ubuntu-latest` x64, four processors, after the static web asset change. Both passed, and both mida builds left the same files under `bin` as `dotnet build`. Abp: 127.0 s plain (the faster of 174.1 s and 127.0 s), 168.8 s empty (1.33), 101.5 s filled (0.80) on 163 hits and 0 misses. OrchardCore: 212.4 s plain (the faster of 218.0 s and 212.4 s), 208.1 s empty (0.98), 19.9 s filled (0.09) on 448 hits and 0 misses, so its 109 misses were this too.
-- Both again on 2026-11-16, same kind of runner, commit `8dd187e`, both passed. Abp: 123.2 s plain (the faster of 180.6 s and 123.2 s), 169.8 s empty (1.38), 100.7 s filled (0.82) on 163 hits. OrchardCore: 162.9 s plain, 177.8 s empty (1.09), 16.8 s filled (0.10) on 448 hits. Abp's 0.82 is its 107 multi-targeted projects, which have no key ([multi-targeting.md](multi-targeting.md)).
-- OrchardCore's own assemblies differ between two plain builds: 9,089 of 17,957 files, about 250 assemblies and their copies. The assembly holds the full path of its PDB, since `SourceRoot` has the package folder and not the repo, so `PathMap` maps nothing in the checkout. The repo references `Microsoft.SourceLink.GitHub` 10.0.300 as a `GlobalPackageReference` and built on SDK 11. Which of the two leaves the repo's root out is not checked.
+- The framework: 56,397 files under `bin`, of which 450 differ between the two plain builds, by their names mostly test projects' executables and assemblies. Every other file is the same after both mida builds. The two plain builds took 75.2 s and 51.9 s, so one run each says little about the ratio.
+- The framework's 41 misses in an unchanged clone are all "static web assets name this checkout": 33 of the 45 Web and Razor SDK projects and 8 projects that copy their manifests. All 163 keys are the same at both paths. Neither build said so, because that line went to MSBuild's logger as a message and the console logger is quiet. It is now printed as a `mida:` line.
+- The web CMS gets no keys: every project sets `TargetFrameworks`, with the one value `net10.0`, and a multi-targeted project is not cached. So this run compared three plain builds. Fixed 2026-11-12 ([cache-key.md](cache-key.md)), and the same test then gave 448 keys, two for each project: 88.5 s plain, 119.0 s with an empty cache (1.34), and 76.9 s with a filled one (0.87) on 339 hits and 109 misses. Which projects miss is not looked at yet.
+- The framework again on 2026-11-12, once static web asset manifests were stored with tokens ([static-web-assets.md](static-web-assets.md)), same container on a 48 GB ext4 image (12 GB ran out): 49.2 s plain (the faster of 69.0 s and 49.2 s), 65.4 s with an empty cache (1.33), and 37.0 s with a filled one (0.75) on 163 hits and 0 misses, against 1.16 and 41 misses before. Both mida builds left the same files under `bin` as `dotnet build`, and neither said "not stored" or "different outputs". Cache 1,007 MB.
+- Both on GitHub Actions on 2026-11-12, `ubuntu-latest` x64, four processors, after the static web asset change. Both passed, and both mida builds left the same files under `bin` as `dotnet build`. The framework: 127.0 s plain (the faster of 174.1 s and 127.0 s), 168.8 s empty (1.33), 101.5 s filled (0.80) on 163 hits and 0 misses. The web CMS: 212.4 s plain (the faster of 218.0 s and 212.4 s), 208.1 s empty (0.98), 19.9 s filled (0.09) on 448 hits and 0 misses, so its 109 misses were this too.
+- Both again on 2026-11-16, same kind of runner, commit `8dd187e`, both passed. The framework: 123.2 s plain (the faster of 180.6 s and 123.2 s), 169.8 s empty (1.38), 100.7 s filled (0.82) on 163 hits. The web CMS: 162.9 s plain, 177.8 s empty (1.09), 16.8 s filled (0.10) on 448 hits. The framework's 0.82 is its 107 multi-targeted projects, which have no key ([multi-targeting.md](multi-targeting.md)).
+- The web CMS's own assemblies differ between two plain builds: 9,089 of 17,957 files, about 250 assemblies and their copies. The assembly holds the full path of its PDB, since `SourceRoot` has the package folder and not the repo, so `PathMap` maps nothing in the checkout. The repo references `Microsoft.SourceLink.GitHub` 10.0.300 as a `GlobalPackageReference` and built on SDK 11. Which of the two leaves the repo's root out is not checked.
 
 Not covered: `obj`, starting the app, and edits. The plan for edits stands: the scenarios 0 to 3, with one generic partial edit: append a comment line to a `.cs` in a leaf project. That changes the key but not the reference assembly, so it checks early cutoff without knowing the repo. API edits need repo knowledge, so skip them there.
 
-Two filters: the repo must build with SDK 10 or 11 (`global.json`), and Arcade repos (aspire, runtime, roslyn, efcore, aspnetcore) bootstrap their own SDK through `eng/build.sh`, so they cost weeks, not an afternoon. `dotnet/runtime` is out for good: native code, custom build. Aspire's solution builds with `dotnet build` once `NUGET_PACKAGES` is set, see above. Plain-SDK repos of real size to try first, in order: the 49-project repo the plan already names, OrchardCore, semantic-kernel `dotnet/`, OpenTelemetry .NET, Akka.NET. Their SDK pins and project counts are unchecked.
+Two filters: the repo must build with SDK 10 or 11 (`global.json`), and repos on the .NET team's shared build SDK (the app stack, the .NET runtime, the C# compiler, ASP.NET Core and others) bootstrap their own SDK through `eng/build.sh`, so they cost weeks, not an afternoon. The .NET runtime is out for good: native code, custom build. The app stack's solution builds with `dotnet build` once `NUGET_PACKAGES` is set, see above. Plain-SDK repos of real size to try first, in order: the 49-project repo the plan already names, the web CMS, an AI SDK's .NET folder, a telemetry library, an actor framework. Their SDK pins and project counts are unchecked.
 
 ## Profiling on the pool, 2026-11-20
 
 Starting from the `mida-8` baseline above. `scripts/profile-mida.sh` stands in for mida as `MIDA_BENCH_TOOL` and leaves, per run, `MIDA_TIMINGS` phases, a `dotnet-trace` of the mida process, its `System.Runtime` counters and the bytes the machine wrote. `MIDA_EXTRA_ARGS` adds arguments to every run and `MIDA_PROFILE_ENV` variables for mida and everything it starts. Submitted with `scripts/pool.sh`, which uploads the working tree, so no commit is needed:
 
-`MIDA_PROFILE_DIR="$PWD/TestResults/profile" MIDA_BENCH_ITERATIONS=2 MIDA_BENCH_TOOL="$PWD/scripts/profile-mida.sh" dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/Abp"`, after installing `dotnet-trace`, `dotnet-counters` and the packed mida as the workflows do.
+`MIDA_PROFILE_DIR="$PWD/TestResults/profile" MIDA_BENCH_ITERATIONS=2 MIDA_BENCH_TOOL="$PWD/scripts/profile-mida.sh" dotnet test --project tests/Mida.Tests -f net11.0 --treenode-filter "/*/*/RealWorld/<test>"`, with the framework's test in place of `<test>`, after installing `dotnet-trace`, `dotnet-counters` and the packed mida as the workflows do.
 
 A traced run's BenchmarkDotNet time is not a result. The phases below are from inside mida and are compared only with other traced runs. The ratios are untraced runs of the full suite, as `bench.yml` and `realworld.yml` run it, one run each.
 
 What the profiles said:
 
 - **A run of hits is at the disk's floor.** `Unchanged` at 1024 projects spent 53 s restoring hits, while the machine wrote 12.6 GB, 235 MB/s on a disk that writes about 205 MB/s, with the processors 9% busy. No change to mida's code moves it. Only writing fewer bytes would.
-- **An empty-cache Abp build spent 35 s before its first project built:** restore 20.4 s, graph evaluation 11.1 s, prediction 3.1 s. Its build phase alone, 76 s, was about as long as a whole plain build: 72.1 s in the baseline, 89.0 s in that run.
-- **The JIT was a quarter of mida's CPU time.** It took 25 to 28 s of mida's 110 to 135 s of CPU time on Abp, compiling 200 to 800 methods a second through graph evaluation and the first half of the build. In graph evaluation 38% of the running samples were struct copies inside MSBuild's evaluator.
-- **Saving outputs costs Abp about 4 s of the build phase:** 70.6 s with `--read-only`, against 74.5 s. Of the managed samples on a processor in that phase, MSBuild's log packets took 20%, saving 12% and keys 10%, so nothing single stands out.
+- **An empty-cache build of the framework spent 35 s before its first project built:** restore 20.4 s, graph evaluation 11.1 s, prediction 3.1 s. Its build phase alone, 76 s, was about as long as a whole plain build: 72.1 s in the baseline, 89.0 s in that run.
+- **The JIT was a quarter of mida's CPU time.** It took 25 to 28 s of mida's 110 to 135 s of CPU time on the framework, compiling 200 to 800 methods a second through graph evaluation and the first half of the build. In graph evaluation 38% of the running samples were struct copies inside MSBuild's evaluator.
+- **Saving outputs costs the framework about 4 s of the build phase:** 70.6 s with `--read-only`, against 74.5 s. Of the managed samples on a processor in that phase, MSBuild's log packets took 20%, saving 12% and keys 10%, so nothing single stands out.
 
-Abp, phases of traced runs in seconds, the mean of two, empty cache then filled:
+The framework, phases of traced runs in seconds, the mean of two, empty cache then filled:
 
 | change | restore | graph evaluation | prediction | build | wall, empty | wall, filled |
 |---|---|---|---|---|---|---|
@@ -435,7 +435,7 @@ Abp, phases of traced runs in seconds, the mean of two, empty cache then filled:
 | and `DOTNET_TieredCompilation=0` for them instead | 12.5 | 5.6 | 2.0 | 61.5 | 82.1 | 47.2 |
 
 - Static graph restore stays: off, restore took 12 s longer here, and 26.0 s against 15.8 s at 1024 generated projects. With it off the filled run restored again, for 33 s.
-- The processes mida starts, NuGet's restore, the worker nodes and the compiler server, are as cold as mida: in a benchmark every build server is shut down first, and on a CI runner each build starts them. Without PGO's instrumented tier the summed build time of OrchardCore's 448 projects fell from 4,797 s to 2,070 s.
+- The processes mida starts, NuGet's restore, the worker nodes and the compiler server, are as cold as mida: in a benchmark every build server is shut down first, and on a CI runner each build starts them. Without PGO's instrumented tier the summed build time of the web CMS's 448 projects fell from 4,797 s to 2,070 s.
 
 So two changes, each measured over the full suite on the pool. `<TieredCompilation>false</TieredCompilation>` in `Mida.csproj`, commit `6ae5390`, and then `DOTNET_TieredPGO=0` for every process mida starts, set in `Program.Run` unless the user set it. Ratios are mida over plain:
 
@@ -445,30 +445,30 @@ So two changes, each measured over the full suite on the pool. `<TieredCompilati
 | Benchmark Unchanged / BodyEdit / ApiEdit | 0.48 / 0.59 / 0.62 | 0.48 / 0.56 / 0.60 | 0.48 / 0.55 / 0.59 |
 | Benchmark TestFresh | 1.11 | 1.08 | 0.98 |
 | Benchmark TestUnchanged / TestBodyEdit / TestApiEdit | 0.44 / 0.53 / 0.59 | 0.45 / 0.52 / 0.56 | 0.44 / 0.52 / 0.56 |
-| Abp, empty / filled | 1.47 / 0.87 | 1.49 / 0.81 | 1.14 / 0.68 |
-| OrchardCore, empty / filled | 1.06 / 0.10 | 1.03 / 0.10 | 0.59 / 0.08 |
-| OrchardCoreTests, empty / filled | 1.01 / 0.08 | 1.00 / 0.08 | 0.60 / 0.07 |
-| Aspire, empty / filled | 0.89 / 0.43 | 0.95 / 0.45 | 0.59 / 0.31 |
-| McpTests, empty / filled | 1.06 / 0.26 | 1.07 / 0.25 | 1.04 / 0.25 |
+| framework, empty / filled | 1.47 / 0.87 | 1.49 / 0.81 | 1.14 / 0.68 |
+| web CMS, empty / filled | 1.06 / 0.10 | 1.03 / 0.10 | 0.59 / 0.08 |
+| web CMS tests, empty / filled | 1.01 / 0.08 | 1.00 / 0.08 | 0.60 / 0.07 |
+| app stack, empty / filled | 0.89 / 0.43 | 0.95 / 0.45 | 0.59 / 0.31 |
+| SDK repo tests, empty / filled | 1.06 / 0.26 | 1.07 / 0.25 | 1.04 / 0.25 |
 
 - Every test passed, with the same hits and misses as the baseline, and every mida build left the same files as `dotnet build`.
-- The first change alone moved only Abp's filled ratio past the 0.04 that two baseline runs differed by: its mida build took 55.7 s, not 62.7 s. That and the halved evaluation are why it stays. Aspire's empty ratio rose because its plain build was faster that time, 373.5 s against 395.0 s, while mida took 353.8 s against 351.6 s.
+- The first change alone moved only the framework's filled ratio past the 0.04 that two baseline runs differed by: its mida build took 55.7 s, not 62.7 s. That and the halved evaluation are why it stays. The app stack's empty ratio rose because its plain build was faster that time, 373.5 s against 395.0 s, while mida took 353.8 s against 351.6 s.
 - The hits did not move, as the disk's floor says they cannot.
-- mcp's tests, which `mida test` starts with the variable too, did not get slower, and that run's time is mostly its tests.
+- The SDK repo's tests, which `mida test` starts with the variable too, did not get slower, and that run's time is mostly its tests.
 - **Much of the second change would speed up a plain build too.** The plain side never gets the variable. Run again with `DOTNET_TieredPGO=0` exported for the whole `dotnet test`, so for plain as well, one run each:
 
   | test | plain | mida | mida / plain | filled / plain |
   |---|---|---|---|---|
   | Benchmark Fresh | 95.7 s, was 111.8 s | 85.6 s | 0.89 | |
-  | OrchardCore | 73.5 s, was 126.9 s | 75.2 s | 1.02 | 0.14 |
-  | Abp | 65.0 s, was 68.0 s | 80.5 s | 1.24 | 0.73 |
+  | web CMS | 73.5 s, was 126.9 s | 75.2 s | 1.02 | 0.14 |
+  | framework | 65.0 s, was 68.0 s | 80.5 s | 1.24 | 0.73 |
 
-  So OrchardCore's 0.59 is mostly the compiler running faster, which a plain build gets from the same variable. mida's own overhead there is about what it was, 1.02 against 1.06. Abp's plain build barely gains, so most of mida's gain there is its own, beginning with the static graph restore in NuGet's own process, 21.4 s to 11.8 s. Why its build phase gained 14 s and plain's whole build 3 s is not looked into. A user's absolute times are what fell: OrchardCore's empty-cache `mida build` took 74.7 s, not 131.0 s.
-- Tiering off costs a run that needs little: Abp with a filled cache reached its hits 0.78 s after starting, against 0.71 s.
+  So the web CMS's 0.59 is mostly the compiler running faster, which a plain build gets from the same variable. mida's own overhead there is about what it was, 1.02 against 1.06. The framework's plain build barely gains, so most of mida's gain there is its own, beginning with the static graph restore in NuGet's own process, 21.4 s to 11.8 s. Why its build phase gained 14 s and plain's whole build 3 s is not looked into. A user's absolute times are what fell: the web CMS's empty-cache `mida build` took 74.7 s, not 131.0 s.
+- Tiering off costs a run that needs little: the framework with a filled cache reached its hits 0.78 s after starting, against 0.71 s.
 
 Not done:
 
 - Hard links from the store in place of copies would cut what a hit writes, which is the floor of every filled-cache ratio. [How much of a hit is MSBuild](#how-much-of-a-hit-is-msbuild-2026-11-11) tried them and set them aside, because a build that writes into a linked file would change the blob.
 - `mida test` was not profiled on its own. TestFresh moved with the build.
 - `DOTNET_TieredPGO=0` reaches every test process `mida test` starts and a compiler server that outlives mida. Only cold processes were measured, so a warm server or a long CPU-bound test suite could be slower without PGO.
-- Saving outputs, about 4 s of Abp's build phase, is not shortened.
+- Saving outputs, about 4 s of the framework's build phase, is not shortened.

@@ -44,8 +44,8 @@ A NuGet config is never read: it can hold credentials, and a CI job writes a new
 ## Numbers
 
 - Generated repo, 1024 projects, `Unchanged`, on GitHub's hosted runners with an AMD EPYC 7763: 0.71 of a plain build on 2026-11-10, and 0.28 on 2026-11-14.
-- OrchardCore v3.0.1, 448 keys, all hits, on a hosted runner: 16.8 s against 162.9 s, 0.10.
-- Abp 10.7.1 in the OrbStack container: the graph is found and checked and restore skipped in 1.0 s. Its 107 multi-targeted projects have no key, so MSBuild still loads and evaluates for 6.0 s ([multi-targeting.md](multi-targeting.md)).
+- A web CMS of 227 projects, 448 keys, all hits, on a hosted runner: 16.8 s against 162.9 s, 0.10.
+- An application framework of 270 projects, in the OrbStack container: the graph is found and checked and restore skipped in 1.0 s. Its 107 multi-targeted projects have no key, so MSBuild still loads and evaluates for 6.0 s ([multi-targeting.md](multi-targeting.md)).
 
 ## Checks
 
@@ -53,7 +53,7 @@ A NuGet config is never read: it can hold credentials, and a CI job writes a new
 
 ## Known limits
 
-- A checkout that has been built answers differently from a clean one, since `bin/` is there. It gets a graph of its own, which costs one restore and one evaluation per clone: 20 s and 8 s on Abp.
+- A checkout that has been built answers differently from a clean one, since `bin/` is there. It gets a graph of its own, which costs one restore and one evaluation per clone: 20 s and 8 s on the application framework.
 - A new build of mida starts a new chain.
 - Of two environment variables that differ only in case, the first listed is the one asked.
 - Environment variables an evaluation read are questions of the graph, but not lines of a project's key.

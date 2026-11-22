@@ -215,7 +215,7 @@ public sealed partial class GeneratedRepoTests : IDisposable
         await Assert.That(exitCode).IsEqualTo(0).Because(output);
 
         // A whole run asks those libraries for the extra target, so their filtered entries, built without it, must not
-        // be their hits: on OrchardCore that target would be the static web assets'. Everything else in the closure hits.
+        // be their hits: in a web repo that target would be the static web assets'. Everything else in the closure hits.
         var extra = asker.References.Count(r => needed.Contains(r) && !repo.Projects.First(p => p.Name == r).Frameworks.Contains(';', StringComparison.Ordinal));
         if (multiTargetEvery == 0)
         {

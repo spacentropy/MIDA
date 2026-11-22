@@ -114,7 +114,7 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsPass(clone);
     }
 
-    // As OrchardCore writes every project. Such a project has an outer node and one inner node, and both are cached.
+    // One framework in TargetFrameworks. Such a project has an outer node and one inner node, and both are cached.
     [Test]
     public async Task OneFrameworkInTargetFrameworksIsCached()
     {
@@ -184,7 +184,7 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsPass(clone);
     }
 
-    // As Aspire.Hosting.Blazor writes Gateway.cs: from a target, into obj/Debug/Scripts, outside obj/Debug/net10.0. A hit
+    // A source file written from a target into obj/Debug/Scripts, outside obj/Debug/net10.0, and copied to bin/. A hit
     // of LibB would leave it out, and LibA, which misses, would then fail to copy it.
     [Test]
     public async Task ProjectThatCopiesAFileItWritesOutsideItsOutputsIsBuilt()
@@ -192,8 +192,8 @@ public sealed class CacheEndToEndTests : IDisposable
         string Writing(string relativePath)
         {
             var root = Checkout(relativePath);
-            // Where Aspire's comes to: Arcade sets IntermediateOutputPath early, and a property takes it before the SDK
-            // appends the framework.
+            // Where such a file lands when a build SDK sets IntermediateOutputPath early, and a property takes it before
+            // the .NET SDK appends the framework.
             Edit(root, "LibB/LibB.csproj", "</Project>", """
                   <PropertyGroup><GenDir>$(BaseIntermediateOutputPath)$(Configuration)/Scripts/</GenDir></PropertyGroup>
                   <ItemGroup><Content Include="$(GenDir)Gen.txt" CopyToOutputDirectory="PreserveNewest" Link="Scripts/Gen.txt" /></ItemGroup>
@@ -312,7 +312,7 @@ public sealed class CacheEndToEndTests : IDisposable
         await AssertTestsFailOn(root, "edited");
     }
 
-    // Stamps versions at build time from a file outside the key, the way MinVer does from git.
+    // Stamps versions at build time from a file outside the key, the way version tools do from git.
     private const string StampVersion = """
         <Target Name="StampVersion" BeforeTargets="GetAssemblyVersion">
           <ReadLinesFromFile File="version.txt"><Output TaskParameter="Lines" PropertyName="Stamped" /></ReadLinesFromFile>
@@ -483,7 +483,7 @@ public sealed class CacheEndToEndTests : IDisposable
         await Assert.That(ManifestsNaming("README.md")).IsEqualTo(0);
     }
 
-    // As OrchardCore's tests make theirs: a web host takes its web root only from a wwwroot that exists. With one
+    // A test project that starts a web host: it takes its web root only from a wwwroot that exists. With one
     // framework in TargetFrameworks the outer build makes bin/Debug/wwwroot as well, outside every output directory.
     [Test]
     [Arguments("<TargetFramework>net10.0</TargetFramework>", "5 hits", false)]
@@ -511,8 +511,8 @@ public sealed class CacheEndToEndTests : IDisposable
         }
     }
 
-    // As OrchardCore's CMS web app copies translations from packages into Localization/ and makes wwwroot/, in its own
-    // directory. The second build in the writer finds both there already, and still stores them.
+    // A web app that copies translations from packages into Localization/ and makes wwwroot/, in its own directory.
+    // The second build in the writer finds both there already, and still stores them.
     [Test]
     [Arguments(true)]
     [Arguments(false)]

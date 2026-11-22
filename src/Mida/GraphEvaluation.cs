@@ -226,8 +226,8 @@ internal static partial class GraphEvaluation
             return "packs on build";
         }
 
-        // A file the build writes under bin/ or obj/ but outside the directories a hit restores, such as Aspire.Hosting.Blazor's
-        // obj/<configuration>/Scripts/Gateway.cs from a template, is missing after a hit, and a dependent's copy of it fails.
+        // A file the build writes under bin/ or obj/ but outside the directories a hit restores, such as a source file
+        // written from a template into obj/<configuration>/Scripts/, is missing after a hit, and a dependent's copy of it fails.
         // shortcut: such a project is built every time, capture its whole configuration directory when one costs too much.
         // See docs/notes/relocation.md
         var roots = OwnedRootProperties.Select(p => Absolute(project, p)).OfType<string>().Select(KeyComputer.WithSeparator).ToList();

@@ -27,10 +27,10 @@ internal static class ProjectOutputs
     }
 
     /// <summary>
-    /// The empty directories under bin/ and obj/, which a hit must make too: OrchardCore's tests make bin/.../wwwroot,
-    /// and without it the web host has no web root. Outside them a directory can be the repo's own. Also an outer
-    /// node's and outside the output directories: OrchardCore.Tests' outer build makes bin/Debug/wwwroot. Nothing
-    /// deletes a directory, so one an earlier build left is harmless.
+    /// The empty directories under bin/ and obj/, which a hit must make too: a test project that makes bin/.../wwwroot
+    /// for a web host it starts needs it, or the host has no web root. Outside them a directory can be the repo's own.
+    /// Also an outer node's and outside the output directories: an outer build makes $(OutputPath)wwwroot in bin/Debug/.
+    /// Nothing deletes a directory, so one an earlier build left is harmless.
     /// </summary>
     public static List<string> EmptyDirectories(ProjectModel project) =>
     [
@@ -45,7 +45,7 @@ internal static class ProjectOutputs
     /// What the project's directory holds outside <paramref name="skipped"/> and .git: each file with its size and last
     /// write time, each directory with -1. A build that changes it writes into the source tree, which a hit would not.
     /// The project's own output directories outside bin/ and obj/ are looked at: BuildPrediction takes the destination
-    /// of any Copy for one, such as OrchardCore's Localization/.
+    /// of any Copy for one, such as a Localization/ that a target copies translations into.
     /// </summary>
     public static Dictionary<string, (long Length, long Time)> SourceTree(ProjectModel project, IReadOnlySet<string> skipped)
     {

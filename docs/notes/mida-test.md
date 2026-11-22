@@ -59,7 +59,7 @@ Exit codes:
 ## Not the same as `dotnet test`
 
 - `RunArguments`, `TestingPlatformCommandLineArguments`, a `.runsettings` file named in the project and launch profiles are not applied. Pass what is needed after `--`.
-- What follows `--` reaches the test application's own command line, as with `dotnet run`. For xUnit v3 that is xUnit's native one unless the project sets `UseMicrosoftTestingPlatformRunner`: its generated `Main` starts Microsoft.Testing.Platform only when given `--server`, as `dotnet test` gives it. Seen 2026-11-17 with `xunit.v3.mtp-v2` 3.2.2, the package OrchardCore uses: the project says `IsTestingPlatformApplication`, passes with 0, fails with 1, and `--filter-method` is "unknown option". Pass and failure are told apart either way. A filter that matches nothing may exit with 0 there, and that pass is stored under those arguments.
+- What follows `--` reaches the test application's own command line, as with `dotnet run`. For xUnit v3 that is xUnit's native one unless the project sets `UseMicrosoftTestingPlatformRunner`: its generated `Main` starts Microsoft.Testing.Platform only when given `--server`, as `dotnet test` gives it. Seen 2026-11-17 with `xunit.v3.mtp-v2` 3.2.2: the project says `IsTestingPlatformApplication`, passes with 0, fails with 1, and `--filter-method` is "unknown option". Pass and failure are told apart either way. A filter that matches nothing may exit with 0 there, and that pass is stored under those arguments.
 - A self-contained test application has no `dotnet exec`. Not tried.
 - There is no combined report, and a passing test node's own output is not shown. Ask the runner for a report file after `--`.
 

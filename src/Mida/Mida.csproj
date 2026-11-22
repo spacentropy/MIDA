@@ -5,7 +5,7 @@
         <ToolCommandName>mida</ToolCommandName>
         <!-- A build has no pauses to keep short. Without the background collector, evaluating 128 projects took 0.79 s, not 0.98 s. -->
         <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
-        <!-- With tiering, the JIT took 25 to 28 s of this process's CPU time on Abp. Off, Abp's graph evaluation took 5.5 s,
+        <!-- With tiering, the JIT took 25 to 28 s of this process's CPU time on a repo of 270 projects. Off, its graph evaluation took 5.5 s,
              not 11 s, on the 8-processor pool, and a run that hits everything reached its hits 0.07 s later. See docs/notes/benchmarks.md -->
         <TieredCompilation>false</TieredCompilation>
         <Description>Builds a .NET repo through MSBuild's static graph with a relocatable output cache on local disk and Google Cloud Storage.</Description>

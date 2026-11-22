@@ -8,8 +8,8 @@ Until this, a project whose static web asset manifests named the checkout was ne
 
 | repo | keys | misses in an unchanged clean clone, before |
 |---|---|---|
-| Abp 10.7.1, framework | 163 | 41, all of them this: 33 Web and Razor SDK projects and 8 that copy their manifests |
-| OrchardCore v3.0.1 | 448 | 109, all of them this: 0 after |
+| an application framework of 270 projects | 163 | 41, all of them this: 33 Web and Razor SDK projects and 8 that copy their manifests |
+| a web CMS of 227 projects | 448 | 109, all of them this: 0 after |
 
 On SDK 11 every Web SDK project has framework assets, so every one of them missed.
 
@@ -43,7 +43,7 @@ The files are chosen by name, never by content, since a PDB holds the root too:
 
 The user decided both on 2026-11-12.
 
-1. **SDK 11's hot reload key pair is left out of the cache.** `browser-tools-key.private.json` and `.public.json` in `obj/.../HotReload/` are new on every Debug build of a Web SDK project. The SDK's `EnsureHotReloadBrowserToolsKey` writes them, and its targets name `Microsoft.DotNet.Watch.BrowserToolsBuildOutputs` as the reader, so `dotnet watch`, which builds anyway. A private key does not belong in a shared bucket. The asset that embeds the public key is stored as built. Its endpoints, `_framework/Microsoft.NET.Sdk.BlazorWeb.HotReload.BrowserTools.Config.*`, are left out of the `dependency-assets` hash since 2026-11-21: their integrity, and even their fingerprint and cache headers, differ on every build, so each time a web app was built its dependents missed. OrchardCore showed it once its CMS web app built on every run, and `WebAppBuiltAgainKeepsItsTestsHitting` checks it.
+1. **SDK 11's hot reload key pair is left out of the cache.** `browser-tools-key.private.json` and `.public.json` in `obj/.../HotReload/` are new on every Debug build of a Web SDK project. The SDK's `EnsureHotReloadBrowserToolsKey` writes them, and its targets name `Microsoft.DotNet.Watch.BrowserToolsBuildOutputs` as the reader, so `dotnet watch`, which builds anyway. A private key does not belong in a shared bucket. The asset that embeds the public key is stored as built. Its endpoints, `_framework/Microsoft.NET.Sdk.BlazorWeb.HotReload.BrowserTools.Config.*`, are left out of the `dependency-assets` hash since 2026-11-21: their integrity, and even their fingerprint and cache headers, differ on every build, so each time a web app was built its dependents missed. A real repo showed it once its web app built on every run, and `WebAppBuiltAgainKeepsItsTestsHitting` checks it.
 2. **A non-deterministic asset is stored.** On SDK 11 the fingerprint of that generated asset is new on every build. Every hit serves the writer's, which is consistent within the entry.
 
 ## Measured
@@ -69,9 +69,9 @@ Mutations, each failing only its own tests: no expansion on restore fails every 
 
 ## Real repos
 
-`RealWorld/Abp` in the OrbStack container, four pinned cores, ext4, SDK 10.0.402 and 11.0.100: a clean clone at another path went from 122 hits and 41 misses to 163 hits and 0 misses, and from 1.16 to 0.75 of a plain build's time. Its `bin/` comparison passed. Numbers in [benchmarks.md](benchmarks.md#real-world-repos). The writers' times did not cause "different outputs" there, since each key was written once.
+The real-world test of the application framework, in the OrbStack container, four pinned cores, ext4, SDK 10.0.402 and 11.0.100: a clean clone at another path went from 122 hits and 41 misses to 163 hits and 0 misses, and from 1.16 to 0.75 of a plain build's time. Its `bin/` comparison passed. Numbers in [benchmarks.md](benchmarks.md#real-world-repos). The writers' times did not cause "different outputs" there, since each key was written once.
 
-On GitHub Actions, `ubuntu-latest` x64, both repos passed with 0 misses in the filled cache: Abp 163 of 163 hits at 0.80 of a plain build, OrchardCore 448 of 448 at 0.09, from 109 misses before.
+On GitHub Actions, `ubuntu-latest` x64, both repos passed with 0 misses in the filled cache: the application framework 163 of 163 hits at 0.80 of a plain build, the web CMS 448 of 448 at 0.09, from 109 misses before.
 
 ## Not done
 

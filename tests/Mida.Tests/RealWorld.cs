@@ -251,7 +251,7 @@ public sealed partial class RealWorld : IDisposable
             Clone(source, url, "plain", (root, _) => Exited(0, Run(root, null, ["test", "--solution", solution, .. Relocatable, .. properties])), after: (o, _) => plain.Add(o)),
             Clone(source, url, "fresh", (root, i) => Exited(1, Benchmarks.RunMida(root, solution, Benchmarks.Caches(Cache(i)), "test", properties)), after: (o, _) => fresh.Add(o)),
             Clone(source, url, "some/deeper/path/filled", (root, i) => Exited(2, Benchmarks.RunMida(root, solution, Filled(i), "test", properties)), after: (o, _) => filled.Add(o)));
-        // mida's own line, not a test's message that says the same, such as mcp's "Test proxy restore failed with exit code 1".
+        // mida's own line, not a test's message that says the same, such as "Test proxy restore failed with exit code 1".
         var failures = fresh.Select(o => o.Split('\n').Where(l => l.Contains("mida: ", StringComparison.Ordinal) && l.Contains(".csproj", StringComparison.Ordinal) && l.Contains(" failed with exit code ", StringComparison.Ordinal)).Select(l => l.Trim()).ToList()).ToList();
 
         var report = $"""
@@ -418,7 +418,7 @@ public sealed partial class RealWorld : IDisposable
     private static Dictionary<string, string> Outputs(string root)
     {
         var rootBytes = Encoding.UTF8.GetBytes(root);
-        // An empty directory too: OrchardCore's tests fail without the bin/.../wwwroot their build makes.
+        // An empty directory too: tests that start a web host can fail without the bin/.../wwwroot their build makes.
         return Directory.EnumerateFileSystemEntries(root, "*", SearchOption.AllDirectories)
             .Where(e => File.Exists(e) || !Directory.EnumerateFileSystemEntries(e).Any())
             .Select(f => Path.GetRelativePath(root, f))

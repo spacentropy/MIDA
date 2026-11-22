@@ -2,7 +2,7 @@
 
 `mida build` builds a .NET repo through MSBuild's static graph with an output cache on local disk and Google Cloud Storage. Each project gets a key from its inputs. On a hit its outputs are restored instead of built, at any checkout path, so a clean CI clone of an unchanged repo restores and builds nothing. `mida test` then runs only the test projects that have not passed with their current inputs. It is a CI tool: the target is CI build and test time.
 
-Status: an MVP, not released yet. On Linux x64 a clean clone with a filled cache builds OrchardCore's 227 projects in 0.10 of a plain build's time, and Abp's 270 in 0.82, since its multi-targeted projects are not cached. Windows has never been run. See [docs/plan.md](docs/plan.md) for what is proven, what is next and the known risks.
+Status: an MVP, not released yet. On Linux x64 a clean clone with a filled cache builds an open-source web CMS of 227 projects in 0.10 of a plain build's time, and an application framework of 270 projects in 0.82, since its multi-targeted projects are not cached. Windows has never been run. See [docs/plan.md](docs/plan.md) for what is proven, what is next and the known risks.
 
 ## Install
 
@@ -98,8 +98,8 @@ To run only the tests that have not passed, replace the last two steps with `mid
 - A build that writes into its project's directory outside `bin/` and `obj/` is not stored, and the build names the file it wrote. If the project names what it writes in `<MidaSourceOutputs>Localization;wwwroot</MidaSourceOutputs>`, paths or patterns under its directory split on `;`, mida stores them and a hit writes them. Name only what the build makes: a named path is no longer an input of the key, and a hit that finds a file there that differs from the stored one builds instead. A build in a checkout that has built before cannot see such a write when the file was there already, so this check is for clean clones, as on CI. What a build writes outside its project's directory is not restored and not checked.
 - A Web or Razor SDK project with a static web asset outside the repo, the package folder, the .NET install and the user profile is not cached, and the build says why. Static web assets on Windows have not been tested.
 - Environment variables are not in the key.
-- In a repo on Microsoft's Arcade SDK, such as dotnet/aspire, set `NUGET_PACKAGES`. Under `ContinuousIntegrationBuild`, which mida sets, Arcade otherwise moves the package folder into the checkout.
-- Tools that stamp a version from git, such as MinVer, NBGV and GitVersion, cost the hits of every dependent whenever they change `AssemblyVersion`: MinVer on a major version, NBGV on a minor version and GitVersion on a patch by default. A hit can serve outputs stamped with an older version, which matters at pack and publish.
+- If the repo's build SDK moves the package folder into the checkout under `ContinuousIntegrationBuild`, which mida sets, set `NUGET_PACKAGES`.
+- Tools that stamp a version from git cost the hits of every dependent whenever they change `AssemblyVersion`, which by default happens on a major, a minor or a patch version, depending on the tool. A hit can serve outputs stamped with an older version, which matters at pack and publish.
 
 ## Develop
 

@@ -27,7 +27,7 @@ internal static class Program
     private static int Run(BuildOptions options)
     {
         // For every process mida starts: NuGet's restore, the worker nodes and the compiler server, which a CI build starts cold.
-        // Without PGO's instrumented tier, Abp on the 8-processor pool restored in 11.8 s, not 21.4 s, and built in 60.1 s, not
+        // Without PGO's instrumented tier, a repo of 270 projects on the 8-processor pool restored in 11.8 s, not 21.4 s, and built in 60.1 s, not
         // 74.5 s. A value the user set stays. See docs/notes/benchmarks.md
         if (Environment.GetEnvironmentVariable("DOTNET_TieredPGO") is null)
         {

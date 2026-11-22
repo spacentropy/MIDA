@@ -91,7 +91,7 @@ public sealed class KeyEndToEndTests : IDisposable
     public async Task BuildTimeReferenceWithoutAKeySaysWhy()
     {
         var root = Checkout("repo");
-        // Two frameworks give Gen no key, as Aspire.Hosting.Tasks has none for the tests that load it.
+        // Two frameworks give Gen no key, as a multi-targeted task project has none for the tests that load it.
         Write(root, "Gen/Gen.csproj", Project(string.Empty, "<LangVersion>latest</LangVersion>")
             .Replace("<TargetFramework>net10.0</TargetFramework>", "<TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks>", StringComparison.Ordinal));
 
