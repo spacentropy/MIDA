@@ -1,4 +1,29 @@
-# Rules for agents
+# Repository Guidelines
+
+## Communication Rules
+**Default: concise.** State facts. Do the action. Move on.
+- **Be brief** — short sentences, no filler words, no pleasantries. Get to the point.
+- **Be precise** — use exact technical terms. Name the file, line, symbol, error code.
+- **Be correct** — verify claims against the code. Don't guess. If uncertain, say so.
+- **Explain when asked** — when the user asks "why" or requests detail, give a thorough technical explanation.
+  ❌ "Sure! I'd be happy to help you with that. The issue you're experiencing is likely caused by..."
+  ❌ "Build failed with some errors related to nullability in the auth module" *(summarized output)*
+  ✅ "Bug in auth middleware — token expiry check uses `<` not `<=`. Fix:"
+
+---
+
+> **⚠️ Rule 1:** After making significant changes to any component, module, or infrastructure (especially in test infrastructure, CI/CD, dependencies, or architectural patterns), **remind the user to consider updating the corresponding AGENTS.md file** in that directory to keep the documentation in sync with the codebase.
+
+> **⚠️ Rule 2:** Do not write unnecessary comments in the code. Write readable code.
+
+## Tools
+- C# → Roslynk; file/text search in the current repo → fff; fff down or a checkout other than the session's launch one → Read + `rg`/`fd` on absolute paths; elsewhere `rg`/`fd`; never `grep`/`find`.
+- Use CLI JSON output when supported; process JSON with `jaq` (never `jq`); pipe JSON you read through `| toon` (not JSON fed to another tool).
+- C# (.cs/.razor/.cshtml): use Roslynk.
+- Roslynk writes bypass `/rewind`: if `git status` is dirty, ask before making them; review `git diff` after.
+- After a semantic rename or signature change, search the original name repo-wide (other language, config, SQL, snapshots); fix by hand.
+- After Roslynk writes, a branch switch or codegen, LSP diagnostics may be stale: trust Roslynk `get_diagnostics` (`includeAnalyzers=false` for speed) over them; on `watchDiagnostic=` or results disagreeing with disk, suggest `reload_solution`.
+- After `dotnet restore`, call Roslynk `reload_solution` yourself (its watcher ignores obj/).
 
 ## Where things run
 
