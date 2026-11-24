@@ -6,5 +6,8 @@ TestResults/
 .vs/
 *.user
 .DS_Store
+node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 # google-github-actions/auth writes these into the checkout. gcloud builds submit leaves out what this file lists.
 gha-creds-*.json

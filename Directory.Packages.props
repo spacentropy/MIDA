@@ -11,8 +11,8 @@
         <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
         <PackageVersion Include="Microsoft.Build.Prediction" Version="1.2.48" />
         <PackageVersion Include="System.CommandLine" Version="3.0.0" />
-        <PackageVersion Include="Testcontainers.FakeGcsServer" Version="4.16.0" />
-        <PackageVersion Include="TUnit" Version="1.85.0" />
+        <PackageVersion Include="Testcontainers.FakeGcsServer" Version="4.17.0" />
+        <PackageVersion Include="TUnit" Version="1.87.12" />
         <PackageVersion Include="Microsoft.Build" Version="$(MidaMSBuildVersion)" />
         <PackageVersion Include="Microsoft.Build.Framework" Version="$(MidaMSBuildVersion)" />
         <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="$(MidaMSBuildVersion)" />
