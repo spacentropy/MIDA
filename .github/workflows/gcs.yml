@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
       # On the pool, where cloudbuild.yaml sets MIDA_TEST_BUCKET and the metadata server gives the credentials. So the
       # GCS tests meet a real bucket here, and the emulator in ci.yml.
-      - uses: ./.github/actions/pool
+      - uses: $/.github/actions/pool
         with:
           project: ${{ secrets.GCP_PROJECT }}
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}

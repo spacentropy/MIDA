@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
       # The last green run on main, to compare with. The first run has none. Uploaded to the pool with the source.
       # Only pushes: --branch main also matches a fork's pull request from its own main, whose artifact the fork wrote.
       - run: gh run download "$(gh run list --workflow bench.yml --branch main --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')" --name bench-${{ matrix.scenario }} --dir previous || true
@@ -34,7 +34,7 @@ jobs:
       # local caches are under /tmp, with the pool's test bucket behind them, as CI has it: a filled cache is in the
       # bucket, and the run starts with an empty local one. The generated repo pins SDK 10, which the numbers in
       # docs/notes/benchmarks.md are on.
-      - uses: ./.github/actions/pool
+      - uses: $/.github/actions/pool
         with:
           project: ${{ secrets.GCP_PROJECT }}
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -56,7 +56,7 @@ jobs:
             MIDA_BENCH_COUNT=1024 MIDA_BENCH_TOOL=mida MIDA_BENCH_PREVIOUS="$PWD/previous" MIDA_BENCH_BUCKET="gs://$MIDA_TEST_BUCKET" \
               dotnet test --project tests/Mida.Tests -f net10.0 --treenode-filter "/*/*/Benchmarks/${{ matrix.scenario }}" --output Detailed
       - run: cat TestResults/machine.md TestResults/bench-*.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: bench-${{ matrix.scenario }}
           path: TestResults/bench-*

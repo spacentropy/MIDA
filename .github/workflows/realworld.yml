@@ -25,12 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to commits: a moved tag would run in a job that can sign in to Google Cloud.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
       # On the pool, which has SDK 10 beside SDK 11: Abp and mcp pin SDK 10, OrchardCore rolls forward to the newest
       # SDK installed, and Aspire pins 11.0.100. The packed tool is installed the way a user installs it, on .NET 11,
       # which loads either SDK. Its checkouts and local caches are under /tmp, with the pool's test bucket behind them,
       # as CI has it: the filled-cache run starts with an empty local cache and reads what the empty-cache run left there.
-      - uses: ./.github/actions/pool
+      - uses: $/.github/actions/pool
         with:
           project: ${{ secrets.GCP_PROJECT }}
           workload-identity-provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -43,7 +43,7 @@ jobs:
       - if: always()
         run: cat TestResults/realworld-*.md >> "$GITHUB_STEP_SUMMARY"
       - if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: realworld-${{ matrix.repo }}
           path: TestResults/realworld-*
