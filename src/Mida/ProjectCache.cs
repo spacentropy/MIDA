@@ -163,8 +163,8 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
         {
             var obsolete = Restored(project);
             obsolete.UnionWith(ProjectOutputs.Written(project));
-            cache.RemoveObsolete(manifest, obsolete.Where(f => project.Outputs(f) && ProjectOutputs.IsCached(Path.GetFileName(f)) && File.Exists(f)));
-            File.WriteAllLines(project.Record!, Paths(manifest));
+            cache.RemoveObsolete(manifest, obsolete.Where(f => project.Deletes(f) && ProjectOutputs.IsCached(Path.GetFileName(f)) && File.Exists(f)));
+            File.WriteAllLines(project.Record!, Paths(manifest).Where(project.Deletes));
         }
 
         Interlocked.Increment(ref hits);
@@ -308,8 +308,8 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
     private void Accept(ProjectModel project, Manifest manifest)
     {
         var paths = Paths(manifest).ToList();
-        // A directory is not in the record: a miss deletes files only, and an empty directory left is harmless. What
-        // MidaSourceOutputs names is, but no delete reads it there: see Restored.
+        // A directory is not in the record: a miss deletes files only, and an empty directory left is harmless. Nor is
+        // what MidaSourceOutputs names, which can be a committed source, and a later narrower MidaSourceOutputs would delete it.
         // A directory may be anywhere under bin/ and obj/: see ProjectOutputs.EmptyDirectories.
         if ((paths.FirstOrDefault(p => !project.Outputs(p) && !project.DeclaresSource(p))
             ?? (manifest.Directories ?? []).Select(d => Path.GetFullPath(d, repoRoot)).FirstOrDefault(d => !project.Owns(d) && !project.DeclaresSource(d))) is { } outside)
@@ -320,7 +320,7 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
         // What MidaSourceOutputs names is not in the key, so a source file there that was edited would be written over.
         // shortcut: a tokenized file there always differs, so it always misses. Compare it detokenized if one turns up.
         if (manifest.Files.Select(f => (Full: Path.GetFullPath(f.Path, repoRoot), f.Hash))
-            .FirstOrDefault(f => !project.Outputs(f.Full) && File.Exists(f.Full) && OutputCache.Hash(f.Full) != f.Hash) is { Full: { } edited })
+            .FirstOrDefault(f => project.DeclaresSource(f.Full) && File.Exists(f.Full) && OutputCache.Hash(f.Full) != f.Hash) is { Full: { } edited })
         {
             throw new InvalidDataException($"{edited} differs from what the entry holds, and MidaSourceOutputs names it");
         }
@@ -329,13 +329,13 @@ internal sealed class ProjectCache(GraphModel graph, KeyComputer computer, Outpu
         {
             var record = project.Record!;
             Directory.CreateDirectory(Path.GetDirectoryName(record)!);
-            File.WriteAllLines(record, Restored(project).Union(paths, StringComparer.Ordinal));
+            File.WriteAllLines(record, Restored(project).Union(paths.Where(project.Deletes), StringComparer.Ordinal));
         }
     }
 
-    /// <summary>The files hits restored for the project since a build last ran, as far as they are still its outputs.</summary>
+    /// <summary>The files hits restored for the project since a build last ran, as far as it may still delete them.</summary>
     private static HashSet<string> Restored(ProjectModel project) =>
         project.Record is { } record && File.Exists(record)
-            ? File.ReadLines(record).Where(project.Outputs).ToHashSet(StringComparer.FromComparison(KeyComputer.PathComparison))
+            ? File.ReadLines(record).Where(project.Deletes).ToHashSet(StringComparer.FromComparison(KeyComputer.PathComparison))
             : new HashSet<string>(StringComparer.FromComparison(KeyComputer.PathComparison));
 }

@@ -560,25 +560,78 @@ public sealed class CacheEndToEndTests : IDisposable
     }
 
     // A name in MidaSourceOutputs takes its files out of the key, so one that also holds a source must not be written over.
+    // A Copy into it makes it a predicted output directory too, which must not change that.
     [Test]
-    public async Task HitDoesNotWriteOverAnEditedFileThatMidaSourceOutputsNames()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HitDoesNotWriteOverAnEditedFileThatMidaSourceOutputsNames(bool copiedInto)
     {
-        string Declaring(string relativePath)
-        {
-            var root = Checkout(relativePath);
-            Edit(root, "LibB/LibB.csproj", "</Project>", "<PropertyGroup><MidaSourceOutputs>wwwroot</MidaSourceOutputs></PropertyGroup></Project>");
-            Write(root, "LibB/wwwroot/site.txt", "source");
-            return root;
-        }
-
-        Build(Declaring("a"));
-        var clone = Declaring("b");
+        Build(DeclaringSource("a", copiedInto));
+        var clone = DeclaringSource("b", copiedInto);
         Write(clone, "LibB/wwwroot/site.txt", "edited");
 
         var output = Build(clone);
 
         await Assert.That(output).Contains("differs from what the entry holds");
         await Assert.That(File.ReadAllText(Path.Combine(clone, "LibB", "wwwroot", "site.txt"))).IsEqualTo("edited");
+    }
+
+    // A hit notes what it restored for the next miss to delete, which must leave the source files there alone, also once
+    // MidaSourceOutputs no longer names them.
+    [Test]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    [Arguments(true, true)]
+    public async Task MissAfterAHitKeepsTheSourceFilesThatMidaSourceOutputsNames(bool copiedInto, bool narrowed)
+    {
+        Build(DeclaringSource("a", copiedInto));
+        var clone = DeclaringSource("b", copiedInto);
+        await Assert.That(Build(clone)).Contains(AllHits);
+
+        if (narrowed)
+        {
+            Edit(clone, "LibB/LibB.csproj", "<MidaSourceOutputs>wwwroot<", "<MidaSourceOutputs>wwwroot/data.txt<");
+        }
+        else
+        {
+            Edit(clone, "LibB/B.cs", """=> "b";""", """=> "edited";""");
+        }
+
+        // A project file is in its dependents' keys too.
+        await Assert.That(Build(clone)).Contains(narrowed ? "1 hits, 4 misses" : "4 hits, 1 misses");
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "LibB", "wwwroot", "site.txt"))).IsEqualTo("source");
+    }
+
+    // A hit removes what the entry before it restored and this one does not hold, which must not take a source file.
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task HitToAnEntryWithoutASourceFileKeepsIt(bool copiedInto)
+    {
+        var writer = DeclaringSource("a", copiedInto);
+        Build(writer);
+        Edit(writer, "LibB/B.cs", """=> "b";""", """=> "edited";""");
+        File.Delete(Path.Combine(writer, "LibB", "wwwroot", "site.txt"));
+        Build(writer);
+
+        var clone = DeclaringSource("b", copiedInto);
+        await Assert.That(Build(clone)).Contains(AllHits);
+        Edit(clone, "LibB/B.cs", """=> "b";""", """=> "edited";""");
+
+        await Assert.That(Build(clone)).Contains(AllHits);
+        await Assert.That(File.ReadAllText(Path.Combine(clone, "LibB", "wwwroot", "site.txt"))).IsEqualTo("source");
+    }
+
+    private string DeclaringSource(string relativePath, bool copiedInto)
+    {
+        var root = Checkout(relativePath);
+        Edit(root, "LibB/LibB.csproj", "</Project>", $"""
+              <PropertyGroup><MidaSourceOutputs>wwwroot</MidaSourceOutputs></PropertyGroup>
+              {(copiedInto ? """<Target Name="CopyIn" AfterTargets="Build"><Copy SourceFiles="data.txt" DestinationFolder="wwwroot" SkipUnchangedFiles="true" /></Target>""" : string.Empty)}
+            </Project>
+            """);
+        Write(root, "LibB/wwwroot/site.txt", "source");
+        return root;
     }
 
     // A local database, a log, a file put there by hand: MSBuild deletes only what it wrote, and so does mida.

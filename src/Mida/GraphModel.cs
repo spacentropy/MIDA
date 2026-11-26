@@ -60,6 +60,12 @@ internal sealed class ProjectModel(SnapshotProject stored, PathTokens tokens, IR
     /// <summary>True for a path in one of the output directories.</summary>
     public bool Outputs(string path) => OutputDirectories.Any(d => path.StartsWith(d, KeyComputer.PathComparison));
 
+    /// <summary>
+    /// True for an output that mida may delete. What MidaSourceOutputs names can be a committed source, also in an
+    /// output directory, as one BuildPrediction takes from a Copy into it.
+    /// </summary>
+    public bool Deletes(string path) => Outputs(path) && !DeclaresSource(path);
+
     /// <summary>True for a path in bin/ or obj/, which hold nothing but what builds write.</summary>
     public bool Owns(string path) => OwnedRoots.Any(o => path.StartsWith(o, KeyComputer.PathComparison));
 
